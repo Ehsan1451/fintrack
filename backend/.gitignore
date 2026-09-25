@@ -1,0 +1,9 @@
+node_modules/
+.env
+dist/
+
+# TypeScript generated files
+*.js
+*.js.map
+*.d.ts
+*.d.ts.map
