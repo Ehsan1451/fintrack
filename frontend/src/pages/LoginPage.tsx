@@ -1,9 +1,33 @@
 import { useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import AuthLayout from './AuthLayout'
 import '../App.css'
 
+function isLoginSuccess(response: unknown): response is { success: true; token: string } {
+  return (
+    typeof response === 'object' &&
+    response !== null &&
+    'success' in response &&
+    response.success === true &&
+    'token' in response &&
+    typeof response.token === 'string'
+  )
+}
+
+function getResponseMessage(response: unknown): string | undefined {
+  if (
+    typeof response === 'object' &&
+    response !== null &&
+    'message' in response &&
+    typeof response.message === 'string'
+  ) {
+    return response.message
+  }
+  return undefined
+}
+
 function LoginPage() {
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -19,7 +43,7 @@ function LoginPage() {
     return nextErrors
   }
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setStatus('')
     const nextErrors = validate()
@@ -27,10 +51,32 @@ function LoginPage() {
     if (Object.keys(nextErrors).length > 0) return
 
     setIsSubmitting(true)
-    window.setTimeout(() => {
+    try {
+      const response = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), password }),
+      })
+      const result: unknown = await response.json().catch(() => null)
+
+      if (!response.ok || !isLoginSuccess(result)) {
+        setStatus(getResponseMessage(result) ?? 'Email or password is incorrect.')
+        return
+      }
+
+      try {
+        window.localStorage.setItem('token', result.token)
+      } catch {
+        setStatus('Login succeeded, but this browser could not save your session. Enable local storage and try again.')
+        return
+      }
+
+      navigate('/dashboard')
+    } catch {
+      setStatus('Unable to connect to the server. Please check your connection and try again.')
+    } finally {
       setIsSubmitting(false)
-      setStatus('Your details are valid. Sign-in will be connected to the backend soon.')
-    }, 700)
+    }
   }
 
   return (
@@ -47,7 +93,7 @@ function LoginPage() {
           {errors.password && <span className="field-error" id="login-password-error" role="alert">{errors.password}</span>}
         </div>
         <button className="button button-primary auth-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Signing in...' : 'Sign in'}{isSubmitting && <span className="spinner" aria-hidden="true" />}</button>
-        {status && <p className="form-status" role="status">{status}</p>}
+        {status && <p className="form-status form-error" role="alert">{status}</p>}
       </form>
       <p className="auth-switch">New to FinTrack? <Link to="/register">Create account</Link></p>
     </AuthLayout>

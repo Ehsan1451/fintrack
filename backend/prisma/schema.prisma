@@ -21,6 +21,7 @@ model Transaction {
   id          String   @id @default(uuid())
   amount      Decimal
   type        TransactionType
+  category    TransactionCategory @default(OTHER_EXPENSE)
   description String?
   date        DateTime @default(now())
   createdAt   DateTime @default(now())
@@ -33,4 +34,20 @@ model Transaction {
 enum TransactionType {
   INCOME
   EXPENSE
+}
+
+enum TransactionCategory {
+  SALARY
+  FREELANCE
+  GIFT
+  OTHER_INCOME
+  FOOD
+  TRANSPORT
+  HOUSING
+  SHOPPING
+  ENTERTAINMENT
+  BILLS
+  EDUCATION
+  HEALTH
+  OTHER_EXPENSE
 }
