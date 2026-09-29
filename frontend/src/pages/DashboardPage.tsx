@@ -194,10 +194,11 @@ function getResponseMessage(value: unknown): string | undefined {
   return undefined
 }
 
-const currencyFormatter = new Intl.NumberFormat(undefined, {
+const currencyFormatter = new Intl.NumberFormat('fr-FR', {
   style: 'currency',
-  currency: 'USD',
+  currency: 'EUR',
 })
+const currencySymbol = currencyFormatter.formatToParts(0).find((part) => part.type === 'currency')?.value ?? ''
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -876,7 +877,7 @@ function DashboardPage() {
               <label className="transaction-field" htmlFor="transaction-amount">
                 Amount
                 <span className="amount-input-wrap">
-                  <span aria-hidden="true">$</span>
+                  <span aria-hidden="true">{currencySymbol}</span>
                   <input
                     id="transaction-amount"
                     name="amount"
