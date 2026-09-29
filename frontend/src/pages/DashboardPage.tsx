@@ -208,6 +208,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 
 function DashboardPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
   const [trends, setTrends] = useState<TransactionTrend[]>([])
   const [isTrendsLoading, setIsTrendsLoading] = useState(true)
   const [trendsError, setTrendsError] = useState('')
@@ -577,6 +578,16 @@ function DashboardPage() {
     timeZone: 'UTC',
   })
   const formatTrendDate = (value: string) => trendDateFormatter.format(new Date(`${value}T00:00:00Z`))
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase()
+  const filteredTransactions = transactions.filter((transaction) =>
+    !normalizedSearchQuery ||
+    [
+      transaction.description ?? '',
+      transaction.category,
+      getCategoryLabel(transaction.category),
+      transaction.type,
+    ].some((field) => field.toLowerCase().includes(normalizedSearchQuery)),
+  )
 
   return (
     <main className="dashboard-page">
@@ -801,15 +812,41 @@ function DashboardPage() {
             </div>
           </div>
 
+          <div className="transaction-field transaction-search-field">
+            <label htmlFor="transaction-search">Search transactions</label>
+            <div className="transaction-search-control">
+              <input
+                id="transaction-search"
+                type="search"
+                aria-label="Search transactions"
+                placeholder="Search transactions..."
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+              {searchQuery && (
+                <button
+                  className="transaction-search-clear"
+                  type="button"
+                  aria-label="Clear transaction search"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              )}
+            </div>
+          </div>
+
           {isLoading ? (
             <p className="dashboard-message" role="status">Loading your transactions...</p>
           ) : error ? (
             <p className="dashboard-message dashboard-error" role="alert">{error}</p>
           ) : transactions.length === 0 ? (
             <p className="dashboard-message">No transactions yet.</p>
+          ) : filteredTransactions.length === 0 ? (
+            <p className="dashboard-message">No transactions match your search.</p>
           ) : (
             <ul className="transaction-list">
-              {transactions.map((transaction) => {
+              {filteredTransactions.map((transaction) => {
                 const isIncome = transaction.type === 'INCOME'
                 return (
                   <li className="transaction-row" key={transaction.id}>
