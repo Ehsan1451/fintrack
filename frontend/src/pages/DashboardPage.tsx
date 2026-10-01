@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import '../App.css'
 
 type TransactionType = 'INCOME' | 'EXPENSE'
+type TransactionDateFilter = 'ALL' | 'TODAY' | 'LAST_7_DAYS' | 'LAST_30_DAYS' | 'THIS_MONTH'
 type TransactionCategory =
   | 'SALARY'
   | 'FREELANCE'
@@ -102,6 +103,11 @@ function isCategoryForType(type: unknown, category: unknown): category is Transa
 function getCategoryLabel(category: string): string {
   const options = [...categoryOptions.INCOME, ...categoryOptions.EXPENSE]
   return options.find((option) => option.value === category)?.label ?? category
+}
+
+function getTransactionDateTimestamp(value: string): number {
+  const dateValue = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value
+  return Date.parse(dateValue)
 }
 
 function isTransaction(value: unknown): value is Transaction {
@@ -212,6 +218,7 @@ function DashboardPage() {
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'ALL' | TransactionType>('ALL')
   const [transactionSort, setTransactionSort] = useState<'NEWEST' | 'OLDEST' | 'AMOUNT_DESC' | 'AMOUNT_ASC'>('NEWEST')
   const [transactionCategoryFilter, setTransactionCategoryFilter] = useState<'ALL' | TransactionCategory>('ALL')
+  const [transactionDateFilter, setTransactionDateFilter] = useState<TransactionDateFilter>('ALL')
   const [trends, setTrends] = useState<TransactionTrend[]>([])
   const [isTrendsLoading, setIsTrendsLoading] = useState(true)
   const [trendsError, setTrendsError] = useState('')
@@ -581,11 +588,26 @@ function DashboardPage() {
     timeZone: 'UTC',
   })
   const formatTrendDate = (value: string) => trendDateFormatter.format(new Date(`${value}T00:00:00Z`))
+  const currentDate = new Date()
+  const todayStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate())
+  const tomorrowStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() + 1)
+  const dateFilterStart =
+    transactionDateFilter === 'THIS_MONTH'
+      ? new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+      : transactionDateFilter === 'LAST_7_DAYS'
+        ? new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() - 6)
+        : transactionDateFilter === 'LAST_30_DAYS'
+          ? new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() - 29)
+          : todayStart
   const normalizedSearchQuery = searchQuery.trim().toLowerCase()
   const matchingTransactions = transactions.filter((transaction) => {
     const matchesType = transactionTypeFilter === 'ALL' || transaction.type === transactionTypeFilter
     const matchesCategory =
       transactionCategoryFilter === 'ALL' || transaction.category === transactionCategoryFilter
+    const transactionTimestamp = getTransactionDateTimestamp(transaction.date)
+    const matchesDate =
+      transactionDateFilter === 'ALL' ||
+      (transactionTimestamp >= dateFilterStart.getTime() && transactionTimestamp < tomorrowStart.getTime())
     const matchesSearch =
       !normalizedSearchQuery ||
       [
@@ -595,7 +617,7 @@ function DashboardPage() {
         transaction.type,
       ].some((field) => field.toLowerCase().includes(normalizedSearchQuery))
 
-    return matchesType && matchesCategory && matchesSearch
+    return matchesType && matchesCategory && matchesDate && matchesSearch
   })
   const filteredTransactions = [...matchingTransactions].sort((first, second) => {
     switch (transactionSort) {
@@ -888,6 +910,21 @@ function DashboardPage() {
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </optgroup>
+              </select>
+            </label>
+            <label className="transaction-field" htmlFor="transaction-date-filter">
+              Date
+              <select
+                id="transaction-date-filter"
+                aria-label="Filter transactions by date"
+                value={transactionDateFilter}
+                onChange={(event) => setTransactionDateFilter(event.target.value as TransactionDateFilter)}
+              >
+                <option value="ALL">All dates</option>
+                <option value="TODAY">Today</option>
+                <option value="LAST_7_DAYS">Last 7 days</option>
+                <option value="LAST_30_DAYS">Last 30 days</option>
+                <option value="THIS_MONTH">This month</option>
               </select>
             </label>
             <label className="transaction-field" htmlFor="transaction-sort">

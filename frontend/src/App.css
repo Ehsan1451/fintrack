@@ -133,7 +133,7 @@ h1, h2, h3, p { margin-top: 0; }.hero h1 { margin: 22px 0 21px; color: var(--ink
 .dashboard-message { padding: 20px; color: var(--muted); font: 12px/1.6 var(--sans); }
 .dashboard-error { border-color: #e7c3bf; background: #fdf2f0; color: #9f3f36; }
 .transactions-actions { display: flex; align-items: center; gap: 16px; }
-.transaction-filters { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(155px, 190px) minmax(170px, 210px) minmax(210px, 250px); align-items: end; gap: 14px; margin-bottom: 14px; }
+.transaction-filters { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(155px, 190px) minmax(170px, 210px) minmax(160px, 190px) minmax(210px, 250px); align-items: end; gap: 14px; margin-bottom: 14px; }
 .transaction-search-field { min-width: 0; }
 .transaction-search-control { position: relative; }
 .transaction-search-control input { padding-right: 40px; }
@@ -200,4 +200,8 @@ h1, h2, h3, p { margin-top: 0; }.hero h1 { margin: 22px 0 21px; color: var(--ink
 	.transaction-meta { grid-column: 1; grid-row: 2; }
 	.transaction-amount { grid-column: 2; grid-row: 1 / span 2; }
 	.transaction-row-controls { grid-column: 2; grid-row: 3; }
+}
+
+@media (min-width: 821px) and (max-width: 1080px) {
+	.transaction-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
