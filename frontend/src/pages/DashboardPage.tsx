@@ -211,6 +211,7 @@ function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'ALL' | TransactionType>('ALL')
   const [transactionSort, setTransactionSort] = useState<'NEWEST' | 'OLDEST' | 'AMOUNT_DESC' | 'AMOUNT_ASC'>('NEWEST')
+  const [transactionCategoryFilter, setTransactionCategoryFilter] = useState<'ALL' | TransactionCategory>('ALL')
   const [trends, setTrends] = useState<TransactionTrend[]>([])
   const [isTrendsLoading, setIsTrendsLoading] = useState(true)
   const [trendsError, setTrendsError] = useState('')
@@ -583,6 +584,8 @@ function DashboardPage() {
   const normalizedSearchQuery = searchQuery.trim().toLowerCase()
   const matchingTransactions = transactions.filter((transaction) => {
     const matchesType = transactionTypeFilter === 'ALL' || transaction.type === transactionTypeFilter
+    const matchesCategory =
+      transactionCategoryFilter === 'ALL' || transaction.category === transactionCategoryFilter
     const matchesSearch =
       !normalizedSearchQuery ||
       [
@@ -592,7 +595,7 @@ function DashboardPage() {
         transaction.type,
       ].some((field) => field.toLowerCase().includes(normalizedSearchQuery))
 
-    return matchesType && matchesSearch
+    return matchesType && matchesCategory && matchesSearch
   })
   const filteredTransactions = [...matchingTransactions].sort((first, second) => {
     switch (transactionSort) {
@@ -864,6 +867,27 @@ function DashboardPage() {
                 <option value="ALL">All transactions</option>
                 <option value="INCOME">Income</option>
                 <option value="EXPENSE">Expenses</option>
+              </select>
+            </label>
+            <label className="transaction-field" htmlFor="transaction-category-filter">
+              Category
+              <select
+                id="transaction-category-filter"
+                aria-label="Filter transactions by category"
+                value={transactionCategoryFilter}
+                onChange={(event) => setTransactionCategoryFilter(event.target.value as 'ALL' | TransactionCategory)}
+              >
+                <option value="ALL">All categories</option>
+                <optgroup label="Income">
+                  {categoryOptions.INCOME.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Expenses">
+                  {categoryOptions.EXPENSE.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </optgroup>
               </select>
             </label>
             <label className="transaction-field" htmlFor="transaction-sort">
