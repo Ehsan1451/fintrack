@@ -210,6 +210,7 @@ function DashboardPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'ALL' | TransactionType>('ALL')
+  const [transactionSort, setTransactionSort] = useState<'NEWEST' | 'OLDEST' | 'AMOUNT_DESC' | 'AMOUNT_ASC'>('NEWEST')
   const [trends, setTrends] = useState<TransactionTrend[]>([])
   const [isTrendsLoading, setIsTrendsLoading] = useState(true)
   const [trendsError, setTrendsError] = useState('')
@@ -580,7 +581,7 @@ function DashboardPage() {
   })
   const formatTrendDate = (value: string) => trendDateFormatter.format(new Date(`${value}T00:00:00Z`))
   const normalizedSearchQuery = searchQuery.trim().toLowerCase()
-  const filteredTransactions = transactions.filter((transaction) => {
+  const matchingTransactions = transactions.filter((transaction) => {
     const matchesType = transactionTypeFilter === 'ALL' || transaction.type === transactionTypeFilter
     const matchesSearch =
       !normalizedSearchQuery ||
@@ -592,6 +593,18 @@ function DashboardPage() {
       ].some((field) => field.toLowerCase().includes(normalizedSearchQuery))
 
     return matchesType && matchesSearch
+  })
+  const filteredTransactions = [...matchingTransactions].sort((first, second) => {
+    switch (transactionSort) {
+      case 'NEWEST':
+        return Date.parse(second.date) - Date.parse(first.date)
+      case 'OLDEST':
+        return Date.parse(first.date) - Date.parse(second.date)
+      case 'AMOUNT_DESC':
+        return Number(second.amount) - Number(first.amount)
+      case 'AMOUNT_ASC':
+        return Number(first.amount) - Number(second.amount)
+    }
   })
 
   return (
@@ -851,6 +864,20 @@ function DashboardPage() {
                 <option value="ALL">All transactions</option>
                 <option value="INCOME">Income</option>
                 <option value="EXPENSE">Expenses</option>
+              </select>
+            </label>
+            <label className="transaction-field" htmlFor="transaction-sort">
+              Sort transactions
+              <select
+                id="transaction-sort"
+                aria-label="Sort transactions"
+                value={transactionSort}
+                onChange={(event) => setTransactionSort(event.target.value as typeof transactionSort)}
+              >
+                <option value="NEWEST">Newest first</option>
+                <option value="OLDEST">Oldest first</option>
+                <option value="AMOUNT_DESC">Amount: highest to lowest</option>
+                <option value="AMOUNT_ASC">Amount: lowest to highest</option>
               </select>
             </label>
           </div>

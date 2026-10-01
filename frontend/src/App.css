@@ -133,7 +133,7 @@ h1, h2, h3, p { margin-top: 0; }.hero h1 { margin: 22px 0 21px; color: var(--ink
 .dashboard-message { padding: 20px; color: var(--muted); font: 12px/1.6 var(--sans); }
 .dashboard-error { border-color: #e7c3bf; background: #fdf2f0; color: #9f3f36; }
 .transactions-actions { display: flex; align-items: center; gap: 16px; }
-.transaction-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, 220px); align-items: end; gap: 14px; margin-bottom: 14px; }
+.transaction-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, 220px) minmax(220px, 260px); align-items: end; gap: 14px; margin-bottom: 14px; }
 .transaction-search-field { min-width: 0; }
 .transaction-search-control { position: relative; }
 .transaction-search-control input { padding-right: 40px; }
