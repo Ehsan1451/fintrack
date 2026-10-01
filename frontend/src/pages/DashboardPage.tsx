@@ -209,6 +209,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 function DashboardPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [transactionTypeFilter, setTransactionTypeFilter] = useState<'ALL' | TransactionType>('ALL')
   const [trends, setTrends] = useState<TransactionTrend[]>([])
   const [isTrendsLoading, setIsTrendsLoading] = useState(true)
   const [trendsError, setTrendsError] = useState('')
@@ -579,15 +580,19 @@ function DashboardPage() {
   })
   const formatTrendDate = (value: string) => trendDateFormatter.format(new Date(`${value}T00:00:00Z`))
   const normalizedSearchQuery = searchQuery.trim().toLowerCase()
-  const filteredTransactions = transactions.filter((transaction) =>
-    !normalizedSearchQuery ||
-    [
-      transaction.description ?? '',
-      transaction.category,
-      getCategoryLabel(transaction.category),
-      transaction.type,
-    ].some((field) => field.toLowerCase().includes(normalizedSearchQuery)),
-  )
+  const filteredTransactions = transactions.filter((transaction) => {
+    const matchesType = transactionTypeFilter === 'ALL' || transaction.type === transactionTypeFilter
+    const matchesSearch =
+      !normalizedSearchQuery ||
+      [
+        transaction.description ?? '',
+        transaction.category,
+        getCategoryLabel(transaction.category),
+        transaction.type,
+      ].some((field) => field.toLowerCase().includes(normalizedSearchQuery))
+
+    return matchesType && matchesSearch
+  })
 
   return (
     <main className="dashboard-page">
@@ -812,28 +817,42 @@ function DashboardPage() {
             </div>
           </div>
 
-          <div className="transaction-field transaction-search-field">
-            <label htmlFor="transaction-search">Search transactions</label>
-            <div className="transaction-search-control">
-              <input
-                id="transaction-search"
-                type="search"
-                aria-label="Search transactions"
-                placeholder="Search transactions..."
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-              />
-              {searchQuery && (
-                <button
-                  className="transaction-search-clear"
-                  type="button"
-                  aria-label="Clear transaction search"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <span aria-hidden="true">×</span>
-                </button>
-              )}
+          <div className="transaction-filters">
+            <div className="transaction-field transaction-search-field">
+              <label htmlFor="transaction-search">Search transactions</label>
+              <div className="transaction-search-control">
+                <input
+                  id="transaction-search"
+                  type="search"
+                  aria-label="Search transactions"
+                  placeholder="Search transactions..."
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
+                {searchQuery && (
+                  <button
+                    className="transaction-search-clear"
+                    type="button"
+                    aria-label="Clear transaction search"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <span aria-hidden="true">×</span>
+                  </button>
+                )}
+              </div>
             </div>
+            <label className="transaction-field" htmlFor="transaction-type-filter">
+              Transaction type
+              <select
+                id="transaction-type-filter"
+                value={transactionTypeFilter}
+                onChange={(event) => setTransactionTypeFilter(event.target.value as 'ALL' | TransactionType)}
+              >
+                <option value="ALL">All transactions</option>
+                <option value="INCOME">Income</option>
+                <option value="EXPENSE">Expenses</option>
+              </select>
+            </label>
           </div>
 
           {isLoading ? (
@@ -843,7 +862,7 @@ function DashboardPage() {
           ) : transactions.length === 0 ? (
             <p className="dashboard-message">No transactions yet.</p>
           ) : filteredTransactions.length === 0 ? (
-            <p className="dashboard-message">No transactions match your search.</p>
+            <p className="dashboard-message">No transactions match your filters.</p>
           ) : (
             <ul className="transaction-list">
               {filteredTransactions.map((transaction) => {
