@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import '../App.css'
 
 type TransactionType = 'INCOME' | 'EXPENSE'
@@ -213,6 +213,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 })
 
 function DashboardPage() {
+  const navigate = useNavigate()
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'ALL' | TransactionType>('ALL')
@@ -641,6 +642,16 @@ function DashboardPage() {
             <span>Fin<span className="brand-accent">Track</span></span>
           </Link>
           <span className="dashboard-header-label">Personal finance</span>
+          <button
+            className="button button-primary"
+            type="button"
+            onClick={() => {
+              window.localStorage.removeItem('token')
+              navigate('/login')
+            }}
+          >
+            Log out
+          </button>
         </header>
 
         <section className="dashboard-intro">
