@@ -15,6 +15,18 @@ model User {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   transactions Transaction[]
+  budgets      Budget[]
+}
+
+model Budget {
+  id       String         @id @default(uuid())
+  userId   String
+  category BudgetCategory
+  month    String         @db.VarChar(7)
+  limit    Decimal
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month, category])
 }
 
 model Transaction {
@@ -41,6 +53,18 @@ enum TransactionCategory {
   FREELANCE
   GIFT
   OTHER_INCOME
+  FOOD
+  TRANSPORT
+  HOUSING
+  SHOPPING
+  ENTERTAINMENT
+  BILLS
+  EDUCATION
+  HEALTH
+  OTHER_EXPENSE
+}
+
+enum BudgetCategory {
   FOOD
   TRANSPORT
   HOUSING
