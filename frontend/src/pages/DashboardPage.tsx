@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import '../App.css'
 
@@ -214,6 +214,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 
 function DashboardPage() {
   const navigate = useNavigate()
+  const sessionExpired = useRef(false)
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'ALL' | TransactionType>('ALL')
@@ -245,6 +246,17 @@ function DashboardPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [refreshVersion, setRefreshVersion] = useState(0)
+
+  const handleUnauthorized = useCallback(() => {
+    if (sessionExpired.current) return
+    sessionExpired.current = true
+    try {
+      window.localStorage.removeItem('token')
+    } catch {
+      // Redirect even if storage is unavailable.
+    }
+    navigate('/login', { replace: true })
+  }, [navigate])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -293,6 +305,10 @@ function DashboardPage() {
           headers,
           signal: controller.signal,
         })
+        if (response.status === 401) {
+          handleUnauthorized()
+          return
+        }
         const result: unknown = await response.json().catch(() => null)
 
         if (!response.ok || !isTransactionsResponse(result)) {
@@ -306,7 +322,7 @@ function DashboardPage() {
 
         setTransactions(result.transactions)
         } catch (requestError) {
-          if (controller.signal.aborted) return
+          if (controller.signal.aborted || sessionExpired.current) return
           setError(
             requestError instanceof Error
               ? requestError.message
@@ -323,6 +339,10 @@ function DashboardPage() {
             headers,
             signal: controller.signal,
           })
+          if (response.status === 401) {
+            handleUnauthorized()
+            return
+          }
           const result: unknown = await response.json().catch(() => null)
 
           if (!response.ok || !isTransactionSummaryResponse(result)) {
@@ -336,7 +356,7 @@ function DashboardPage() {
 
           setSummary(result.data)
         } catch (requestError) {
-          if (controller.signal.aborted) return
+          if (controller.signal.aborted || sessionExpired.current) return
           setSummaryError(
             requestError instanceof Error
               ? requestError.message
@@ -353,6 +373,10 @@ function DashboardPage() {
             headers,
             signal: controller.signal,
           })
+          if (response.status === 401) {
+            handleUnauthorized()
+            return
+          }
           const result: unknown = await response.json().catch(() => null)
 
           if (!response.ok || !isTransactionTrendsResponse(result)) {
@@ -366,7 +390,7 @@ function DashboardPage() {
 
           setTrends(result.data)
         } catch (requestError) {
-          if (controller.signal.aborted) return
+          if (controller.signal.aborted || sessionExpired.current) return
           setTrendsError(
             requestError instanceof Error
               ? requestError.message
@@ -382,7 +406,7 @@ function DashboardPage() {
 
     void loadDashboardData()
     return () => controller.abort()
-  }, [refreshVersion])
+  }, [handleUnauthorized, refreshVersion])
 
   const resetForm = () => {
     setAmount('')
@@ -476,6 +500,10 @@ function DashboardPage() {
           date: new Date(`${date}T12:00:00`).toISOString(),
         }),
       })
+      if (response.status === 401) {
+        handleUnauthorized()
+        return
+      }
       const result: unknown = await response.json().catch(() => null)
 
       if (!response.ok || !isTransactionMutationResponse(result)) {
@@ -493,6 +521,7 @@ function DashboardPage() {
       resetForm()
       setRefreshVersion((version) => version + 1)
     } catch (requestError) {
+      if (sessionExpired.current) return
       setFormError(
         requestError instanceof Error
           ? requestError.message
@@ -522,6 +551,10 @@ function DashboardPage() {
           headers: { Authorization: `Bearer ${token}` },
         },
       )
+      if (response.status === 401) {
+        handleUnauthorized()
+        return
+      }
       const result: unknown = await response.json().catch(() => null)
 
       if (!response.ok || !isDeleteResponse(result)) {
@@ -534,6 +567,7 @@ function DashboardPage() {
       setDeletingTransaction(null)
       setRefreshVersion((version) => version + 1)
     } catch (requestError) {
+      if (sessionExpired.current) return
       setDeleteError(
         requestError instanceof Error
           ? requestError.message
