@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
+import SavingsGoalsPage from './pages/SavingsGoalsPage'
+import RecurringTransactionsPage from './pages/RecurringTransactionsPage'
 
-function DashboardRoute() {
+function DashboardRoute({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<'checking' | 'authenticated' | 'unauthenticated' | 'error'>('checking')
   const [retryCount, setRetryCount] = useState(0)
 
@@ -75,7 +77,7 @@ function DashboardRoute() {
     )
   }
 
-  return <DashboardPage />
+  return children
 }
 
 function App() {
@@ -85,7 +87,9 @@ function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
-        <Route path="/dashboard" element={<DashboardRoute />} />
+        <Route path="/dashboard" element={<DashboardRoute><DashboardPage /></DashboardRoute>} />
+        <Route path="/savings-goals" element={<DashboardRoute><SavingsGoalsPage /></DashboardRoute>} />
+        <Route path="/recurring-transactions" element={<DashboardRoute><RecurringTransactionsPage /></DashboardRoute>} />
       </Routes>
     </BrowserRouter>
   )

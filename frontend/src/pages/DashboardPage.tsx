@@ -903,6 +903,8 @@ function DashboardPage() {
           <div className="eyebrow">Your personal workspace</div>
           <h1>Overview</h1>
           <p>Your income, spending, and recent transactions in one place.</p>
+          <Link className="text-link" to="/savings-goals">Savings Goals <span aria-hidden="true">→</span></Link>
+          <Link className="text-link recurring-dashboard-link" to="/recurring-transactions">Recurring Transactions <span aria-hidden="true">→</span></Link>
         </section>
 
         {summaryError && !error && <p className="dashboard-message dashboard-error" role="alert">Unable to load summary: {summaryError}</p>}

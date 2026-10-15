@@ -204,6 +204,8 @@ h1, h2, h3, p { margin-top: 0; }.hero h1 { margin: 22px 0 21px; color: var(--ink
 .delete-confirm-button:hover { background: #913a34; }
 .delete-confirm-button:disabled { cursor: wait; opacity: .7; }
 @media (max-width: 640px) {
+	body:has(.savings-goals-page) { min-width: 0; }
+	.savings-goals-page .dashboard-header-label { display: none; }
 	.dashboard-page { padding: 24px 17px 48px; }
 	.dashboard-intro { padding-top: 34px; }
 	.summary-grid { grid-template-columns: 1fr; gap: 11px; }
@@ -244,4 +246,59 @@ h1, h2, h3, p { margin-top: 0; }.hero h1 { margin: 22px 0 21px; color: var(--ink
 
 @media (min-width: 821px) and (max-width: 1080px) {
 	.transaction-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.savings-goals-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
+.savings-goal-card { grid-template-rows: auto auto 9px auto minmax(0, 1fr); gap: 16px; }
+.savings-goal-card .budget-card-heading { align-items: flex-start; }
+.savings-goal-target-date { flex: 0 1 auto; padding: 5px 8px; border: 1px solid #e1e9e1; border-radius: 999px; background: #f6f9f5; text-align: right; white-space: normal; overflow-wrap: anywhere; }
+.savings-goal-card .budget-amounts span { align-items: baseline; gap: 8px; }
+.savings-goal-card .budget-amounts strong { max-width: 65%; overflow-wrap: anywhere; }
+.savings-goal-card .budget-card-footer { display: grid; align-items: start; gap: 10px; }
+.savings-goal-card .transaction-row-controls { min-width: 0; flex-wrap: wrap; justify-content: flex-start; gap: 7px; }
+.savings-goal-card .budget-edit-button, .savings-goal-card .transaction-delete-button { min-height: 32px; white-space: normal; }
+.savings-goal-history { min-width: 0; padding-top: 15px; border-top: 1px solid #edf1ec; }
+.savings-goal-history .eyebrow { margin-bottom: 11px; }
+.savings-goal-history .budget-list-message { margin-bottom: 0; }
+.savings-goal-history .transaction-list { min-width: 0; overflow: visible; border: 0; border-radius: 0; background: transparent; }
+.savings-goal-history .transaction-row { grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; min-height: 0; padding: 11px 0; }
+.savings-goal-history .transaction-description { grid-column: 1; grid-row: 1; }
+.savings-goal-history .transaction-meta { grid-column: 1; grid-row: 2; overflow-wrap: anywhere; }
+.savings-goal-history .transaction-amount { grid-column: 2; grid-row: 1 / span 2; max-width: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
+
+.recurring-page-nav { display: flex; align-items: center; gap: 20px; color: var(--muted); font: 500 11px var(--sans); }
+.recurring-page-nav a:hover, .recurring-back-links a:hover { color: var(--green); }
+.recurring-dashboard-link { margin-left: 18px; }
+.recurring-rules-list { grid-template-columns: minmax(0, 1fr); }
+.recurring-rule-card { gap: 14px; }
+.recurring-rule-card .budget-card-heading { align-items: flex-start; }
+.recurring-status { flex: 0 0 auto; padding: 5px 9px; border: 1px solid #e4e7e2; border-radius: 999px; background: #f5f6f3; color: #77817b; font: 600 10px/1.2 var(--sans); }
+.recurring-status-active { border-color: #cbe6d1; background: #eff8f1; color: #168254; }
+.recurring-rule-amounts { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--muted); font: 11px var(--sans); }
+.recurring-rule-amounts strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.recurring-rule-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); gap: 13px 18px; margin: 0; padding: 15px 0; border-top: 1px solid #edf1ec; border-bottom: 1px solid #edf1ec; font-family: var(--sans); }
+.recurring-rule-details div { min-width: 0; }
+.recurring-rule-details dt { margin-bottom: 5px; color: var(--muted); font-size: 10px; }
+.recurring-rule-details dd { margin: 0; color: var(--ink); font-size: 11px; overflow-wrap: anywhere; }
+.recurring-rule-footer { align-items: flex-start; }
+.recurring-rule-footer > span { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.recurring-rule-footer .transaction-row-controls { display: flex; flex: 0 0 auto; gap: 8px; }
+.recurring-rule-footer .transaction-row-controls button { white-space: nowrap; }
+.recurring-rule-footer button:disabled { cursor: wait; opacity: .65; }
+.recurring-success-message { margin: 0 0 14px; color: #168254; font: 12px/1.6 var(--sans); }
+.recurring-back-links { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 20px; }
+.recurring-rule-modal { width: min(100%, 620px); max-height: calc(100vh - 48px); overflow-y: auto; }
+.recurring-rule-form { gap: 15px; }
+.recurring-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.recurring-field-help { color: var(--muted); font: 10px/1.5 var(--sans); }
+.recurring-rule-modal:focus { outline: none; }
+@media (max-width: 640px) {
+	.recurring-page-nav { gap: 10px; font-size: 10px; }
+	.recurring-page-nav a { max-width: 75px; }
+	.recurring-page-nav + .button { padding: 11px 12px; }
+	.recurring-dashboard-link { display: inline-block; margin: 12px 0 0; }
+	.recurring-rule-footer { display: grid; align-items: start; gap: 10px; }
+	.recurring-rule-footer .transaction-row-controls { flex-wrap: wrap; }
+	.recurring-form-grid { grid-template-columns: minmax(0, 1fr); }
+	.recurring-rule-modal { max-height: calc(100vh - 24px); }
 }
