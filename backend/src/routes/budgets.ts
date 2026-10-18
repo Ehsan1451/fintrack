@@ -1,12 +1,12 @@
 import { BudgetCategory, Prisma } from "@prisma/client";
-import { Router, type Response } from "express";
+import { Router, type RequestHandler, type Response } from "express";
+import type { PrismaClient } from "@prisma/client";
 import prisma from "../prisma.js";
 import {
   authenticateToken,
   type AuthenticatedRequest,
 } from "../middleware/auth.js";
 
-const router = Router();
 const monthPattern = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const budgetCategories = Object.values(BudgetCategory);
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
@@ -147,198 +147,207 @@ function serializeBudget(budget: BudgetRecord, spent: Prisma.Decimal) {
   };
 }
 
-router.get(
-  "/",
-  authenticateToken,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const month = parseMonth(req.query.month);
-    if (!month) {
-      return res.status(400).json({
-        success: false,
-        message: "Month must be a valid YYYY-MM value",
-      });
-    }
+export function createBudgetsRouter(
+  db: PrismaClient = prisma,
+  authenticate: RequestHandler = authenticateToken,
+): Router {
+  const router = Router();
 
-    const formatter = createTimeZoneFormatter(req.query.timeZone);
-    if (!formatter) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid IANA time zone is required",
-      });
-    }
-
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    try {
-      const monthKey = `${String(month.year).padStart(4, "0")}-${String(month.month).padStart(2, "0")}`;
-      const { start, end } = getLocalMonthRange(month, formatter);
-      const budgets = await prisma.budget.findMany({
-        where: { userId, month: monthKey },
-        orderBy: { category: "asc" },
-        select: {
-          id: true,
-          month: true,
-          category: true,
-          limit: true,
-        },
-      });
-
-      if (budgets.length === 0) {
-        return res.status(200).json({
-          success: true,
-          month: monthKey,
-          budgets: [],
+  router.get(
+    "/",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const month = parseMonth(req.query.month);
+      if (!month) {
+        return res.status(400).json({
+          success: false,
+          message: "Month must be a valid YYYY-MM value",
         });
       }
 
-      const spendingByCategory = await prisma.transaction.groupBy({
-        by: ["category"],
-        where: {
-          userId,
-          type: "EXPENSE",
-          category: { in: budgets.map((budget) => budget.category) },
-          date: { gte: start, lt: end },
-        },
-        _sum: { amount: true },
-      });
-      const spending = new Map(
-        spendingByCategory.map((group) => [
-          group.category,
-          group._sum.amount ?? new Prisma.Decimal(0),
-        ]),
-      );
+      const formatter = createTimeZoneFormatter(req.query.timeZone);
+      if (!formatter) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid IANA time zone is required",
+        });
+      }
 
-      return res.status(200).json({
-        success: true,
-        month: monthKey,
-        budgets: budgets.map((budget) =>
-          serializeBudget(
-            budget,
-            spending.get(budget.category) ?? new Prisma.Decimal(0),
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required",
+        });
+      }
+
+      try {
+        const monthKey = `${String(month.year).padStart(4, "0")}-${String(month.month).padStart(2, "0")}`;
+        const { start, end } = getLocalMonthRange(month, formatter);
+        const budgets = await db.budget.findMany({
+          where: { userId, month: monthKey },
+          orderBy: { category: "asc" },
+          select: {
+            id: true,
+            month: true,
+            category: true,
+            limit: true,
+          },
+        });
+
+        if (budgets.length === 0) {
+          return res.status(200).json({
+            success: true,
+            month: monthKey,
+            budgets: [],
+          });
+        }
+
+        const spendingByCategory = await db.transaction.groupBy({
+          by: ["category"],
+          where: {
+            userId,
+            type: "EXPENSE",
+            category: { in: budgets.map((budget) => budget.category) },
+            date: { gte: start, lt: end },
+          },
+          _sum: { amount: true },
+        });
+        const spending = new Map(
+          spendingByCategory.map((group) => [
+            group.category,
+            group._sum.amount ?? new Prisma.Decimal(0),
+          ]),
+        );
+
+        return res.status(200).json({
+          success: true,
+          month: monthKey,
+          budgets: budgets.map((budget) =>
+            serializeBudget(
+              budget,
+              spending.get(budget.category) ?? new Prisma.Decimal(0),
+            ),
           ),
-        ),
-      });
-    } catch (error) {
-      console.error("Get budgets error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Something went wrong",
-      });
-    }
-  },
-);
+        });
+      } catch (error) {
+        console.error("Get budgets error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
 
-router.put(
-  "/",
-  authenticateToken,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const body: unknown = req.body;
-    if (!isRecord(body)) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid budget body is required",
-      });
-    }
+  router.put(
+    "/",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const body: unknown = req.body;
+      if (!isRecord(body)) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid budget body is required",
+        });
+      }
 
-    const month = parseMonth(body.month);
-    if (!month) {
-      return res.status(400).json({
-        success: false,
-        message: "Month must be a valid YYYY-MM value",
-      });
-    }
+      const month = parseMonth(body.month);
+      if (!month) {
+        return res.status(400).json({
+          success: false,
+          message: "Month must be a valid YYYY-MM value",
+        });
+      }
 
-    const formatter = createTimeZoneFormatter(body.timeZone);
-    if (!formatter) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid IANA time zone is required",
-      });
-    }
+      const formatter = createTimeZoneFormatter(body.timeZone);
+      if (!formatter) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid IANA time zone is required",
+        });
+      }
 
-    if (!isBudgetCategory(body.category)) {
-      return res.status(400).json({
-        success: false,
-        message: "Category must be a valid expense budget category",
-      });
-    }
+      if (!isBudgetCategory(body.category)) {
+        return res.status(400).json({
+          success: false,
+          message: "Category must be a valid expense budget category",
+        });
+      }
 
-    if (
-      typeof body.limit !== "number" ||
-      !Number.isFinite(body.limit) ||
-      body.limit <= 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Limit must be a positive finite number",
-      });
-    }
+      if (
+        typeof body.limit !== "number" ||
+        !Number.isFinite(body.limit) ||
+        body.limit <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Limit must be a positive finite number",
+        });
+      }
 
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required",
+        });
+      }
 
-    try {
-      const monthKey = `${String(month.year).padStart(4, "0")}-${String(month.month).padStart(2, "0")}`;
-      const { start, end } = getLocalMonthRange(month, formatter);
-      const limit = new Prisma.Decimal(body.limit);
-      const budget = await prisma.budget.upsert({
-        where: {
-          userId_month_category: {
+      try {
+        const monthKey = `${String(month.year).padStart(4, "0")}-${String(month.month).padStart(2, "0")}`;
+        const { start, end } = getLocalMonthRange(month, formatter);
+        const limit = new Prisma.Decimal(body.limit);
+        const budget = await db.budget.upsert({
+          where: {
+            userId_month_category: {
+              userId,
+              month: monthKey,
+              category: body.category,
+            },
+          },
+          create: {
             userId,
             month: monthKey,
             category: body.category,
+            limit,
           },
-        },
-        create: {
-          userId,
-          month: monthKey,
-          category: body.category,
-          limit,
-        },
-        update: { limit },
-        select: {
-          id: true,
-          month: true,
-          category: true,
-          limit: true,
-        },
-      });
-      const spending = await prisma.transaction.aggregate({
-        where: {
-          userId,
-          type: "EXPENSE",
-          category: budget.category,
-          date: { gte: start, lt: end },
-        },
-        _sum: { amount: true },
-      });
+          update: { limit },
+          select: {
+            id: true,
+            month: true,
+            category: true,
+            limit: true,
+          },
+        });
+        const spending = await db.transaction.aggregate({
+          where: {
+            userId,
+            type: "EXPENSE",
+            category: budget.category,
+            date: { gte: start, lt: end },
+          },
+          _sum: { amount: true },
+        });
 
-      return res.status(200).json({
-        success: true,
-        budget: serializeBudget(
-          budget,
-          spending._sum.amount ?? new Prisma.Decimal(0),
-        ),
-      });
-    } catch (error) {
-      console.error("Upsert budget error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Something went wrong",
-      });
-    }
-  },
-);
+        return res.status(200).json({
+          success: true,
+          budget: serializeBudget(
+            budget,
+            spending._sum.amount ?? new Prisma.Decimal(0),
+          ),
+        });
+      } catch (error) {
+        console.error("Upsert budget error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
 
-export default router;
+  return router;
+}
+
+export default createBudgetsRouter();
