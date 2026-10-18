@@ -1,12 +1,12 @@
 import { Prisma } from "@prisma/client";
-import { Router, type Response } from "express";
+import { Router, type RequestHandler, type Response } from "express";
+import type { PrismaClient } from "@prisma/client";
 import prisma from "../prisma.js";
 import {
   authenticateToken,
   type AuthenticatedRequest,
 } from "../middleware/auth.js";
 
-const router = Router();
 const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/;
 const maximumAmount = new Prisma.Decimal("9999999999.99");
 
@@ -144,11 +144,57 @@ function getGoalId(req: AuthenticatedRequest): string | null {
   return typeof goalId === "string" && goalId.length > 0 ? goalId : null;
 }
 
-router.get(
-  "/",
-  authenticateToken,
-  async (req: AuthenticatedRequest, res: Response) => {
-    try {
+export function createSavingsGoalsRouter(
+  db: PrismaClient = prisma,
+  authenticate: RequestHandler = authenticateToken,
+): Router {
+  const router = Router();
+
+  router.get(
+    "/",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return res.status(401).json({
+            success: false,
+            message: "Authentication required",
+          });
+        }
+
+        const goals = await db.savingsGoal.findMany({
+          where: { userId },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          include: goalInclude,
+        });
+
+        return res.status(200).json({
+          success: true,
+          goals: goals.map(serializeGoal),
+        });
+      } catch (error) {
+        console.error("Get savings goals error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
+
+  router.post(
+    "/",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const input = parseGoalBody(req.body);
+      if (!input) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid name, positive target amount, and optional YYYY-MM-DD target date are required",
+        });
+      }
+
       const userId = req.user?.userId;
       if (!userId) {
         return res.status(401).json({
@@ -157,324 +203,287 @@ router.get(
         });
       }
 
-      const goals = await prisma.savingsGoal.findMany({
-        where: { userId },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        include: goalInclude,
-      });
-
-      return res.status(200).json({
-        success: true,
-        goals: goals.map(serializeGoal),
-      });
-    } catch (error) {
-      console.error("Get savings goals error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Something went wrong",
-      });
-    }
-  },
-);
-
-router.post(
-  "/",
-  authenticateToken,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const input = parseGoalBody(req.body);
-    if (!input) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid name, positive target amount, and optional YYYY-MM-DD target date are required",
-      });
-    }
-
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    try {
-      const goal = await prisma.savingsGoal.create({
-        data: {
-          userId,
-          name: input.name,
-          targetAmount: input.targetAmount,
-          targetDate: input.targetDate ?? null,
-        },
-        include: goalInclude,
-      });
-
-      return res.status(201).json({
-        success: true,
-        message: "Savings goal created successfully",
-        goal: serializeGoal(goal),
-      });
-    } catch (error) {
-      console.error("Create savings goal error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Something went wrong",
-      });
-    }
-  },
-);
-
-router.get(
-  "/:id",
-  authenticateToken,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    const goalId = getGoalId(req);
-    if (!goalId) {
-      return res.status(400).json({
-        success: false,
-        message: "Savings goal ID is required",
-      });
-    }
-
-    try {
-      const goal = await prisma.savingsGoal.findFirst({
-        where: { id: goalId, userId },
-        include: goalInclude,
-      });
-
-      if (!goal) {
-        return res.status(404).json({
-          success: false,
-          message: "Savings goal not found",
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        goal: serializeGoal(goal),
-      });
-    } catch (error) {
-      console.error("Get savings goal error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Something went wrong",
-      });
-    }
-  },
-);
-
-router.put(
-  "/:id",
-  authenticateToken,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const input = parseGoalBody(req.body);
-    if (!input) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid name, positive target amount, and optional YYYY-MM-DD target date are required",
-      });
-    }
-
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    const goalId = getGoalId(req);
-    if (!goalId) {
-      return res.status(400).json({
-        success: false,
-        message: "Savings goal ID is required",
-      });
-    }
-
-    try {
-      const result = await prisma.$transaction(async (transaction) => {
-        const updateData: {
-          name: string;
-          targetAmount: Prisma.Decimal;
-          targetDate?: Date | null;
-        } = {
-          name: input.name,
-          targetAmount: input.targetAmount,
-        };
-        if (input.targetDate !== undefined) updateData.targetDate = input.targetDate;
-
-        const updated = await transaction.savingsGoal.updateMany({
-          where: { id: goalId, userId },
-          data: updateData,
-        });
-        if (updated.count === 0) return null;
-
-        return transaction.savingsGoal.findFirst({
-          where: { id: goalId, userId },
-          include: goalInclude,
-        });
-      });
-
-      if (!result) {
-        return res.status(404).json({
-          success: false,
-          message: "Savings goal not found",
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: "Savings goal updated successfully",
-        goal: serializeGoal(result),
-      });
-    } catch (error) {
-      console.error("Update savings goal error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Something went wrong",
-      });
-    }
-  },
-);
-
-router.delete(
-  "/:id",
-  authenticateToken,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    const goalId = getGoalId(req);
-    if (!goalId) {
-      return res.status(400).json({
-        success: false,
-        message: "Savings goal ID is required",
-      });
-    }
-
-    try {
-      const result = await prisma.savingsGoal.deleteMany({
-        where: { id: goalId, userId },
-      });
-      if (result.count === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "Savings goal not found",
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: "Savings goal deleted successfully",
-      });
-    } catch (error) {
-      console.error("Delete savings goal error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Something went wrong",
-      });
-    }
-  },
-);
-
-router.post(
-  "/:id/contributions",
-  authenticateToken,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    const goalId = getGoalId(req);
-    if (!goalId) {
-      return res.status(400).json({
-        success: false,
-        message: "Savings goal ID is required",
-      });
-    }
-
-    const body: unknown = req.body;
-    if (!isRecord(body) || Object.hasOwn(body, "userId") || Object.hasOwn(body, "goalId")) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid contribution body is required",
-      });
-    }
-
-    const amount = parseAmount(body.amount);
-    if (!amount) {
-      return res.status(400).json({
-        success: false,
-        message: "Amount must be a positive monetary amount with at most two decimal places",
-      });
-    }
-
-    const date = parseDateOnly(body.date);
-    if (!date) {
-      return res.status(400).json({
-        success: false,
-        message: "Date must be a valid YYYY-MM-DD calendar date",
-      });
-    }
-
-    try {
-      const goal = await prisma.$transaction(async (transaction) => {
-        const ownedGoal = await transaction.savingsGoal.findFirst({
-          where: { id: goalId, userId },
-          select: { id: true },
-        });
-        if (!ownedGoal) return null;
-
-        await transaction.savingsContribution.create({
+      try {
+        const goal = await db.savingsGoal.create({
           data: {
-            goalId: ownedGoal.id,
-            amount,
-            date,
+            userId,
+            name: input.name,
+            targetAmount: input.targetAmount,
+            targetDate: input.targetDate ?? null,
           },
-        });
-
-        return transaction.savingsGoal.findFirst({
-          where: { id: ownedGoal.id, userId },
           include: goalInclude,
         });
-      });
 
-      if (!goal) {
-        return res.status(404).json({
+        return res.status(201).json({
+          success: true,
+          message: "Savings goal created successfully",
+          goal: serializeGoal(goal),
+        });
+      } catch (error) {
+        console.error("Create savings goal error:", error);
+        return res.status(500).json({
           success: false,
-          message: "Savings goal not found",
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
+
+  router.get(
+    "/:id",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required",
         });
       }
 
-      return res.status(201).json({
-        success: true,
-        message: "Savings contribution added successfully",
-        goal: serializeGoal(goal),
-      });
-    } catch (error) {
-      console.error("Add savings contribution error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Something went wrong",
-      });
-    }
-  },
-);
+      const goalId = getGoalId(req);
+      if (!goalId) {
+        return res.status(400).json({
+          success: false,
+          message: "Savings goal ID is required",
+        });
+      }
 
-export default router;
+      try {
+        const goal = await db.savingsGoal.findFirst({
+          where: { id: goalId, userId },
+          include: goalInclude,
+        });
+
+        if (!goal) {
+          return res.status(404).json({
+            success: false,
+            message: "Savings goal not found",
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          goal: serializeGoal(goal),
+        });
+      } catch (error) {
+        console.error("Get savings goal error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
+
+  router.put(
+    "/:id",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const input = parseGoalBody(req.body);
+      if (!input) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid name, positive target amount, and optional YYYY-MM-DD target date are required",
+        });
+      }
+
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required",
+        });
+      }
+
+      const goalId = getGoalId(req);
+      if (!goalId) {
+        return res.status(400).json({
+          success: false,
+          message: "Savings goal ID is required",
+        });
+      }
+
+      try {
+        const result = await db.$transaction(async (transaction) => {
+          const updateData: {
+            name: string;
+            targetAmount: Prisma.Decimal;
+            targetDate?: Date | null;
+          } = {
+            name: input.name,
+            targetAmount: input.targetAmount,
+          };
+          if (input.targetDate !== undefined) updateData.targetDate = input.targetDate;
+
+          const updated = await transaction.savingsGoal.updateMany({
+            where: { id: goalId, userId },
+            data: updateData,
+          });
+          if (updated.count === 0) return null;
+
+          return transaction.savingsGoal.findFirst({
+            where: { id: goalId, userId },
+            include: goalInclude,
+          });
+        });
+
+        if (!result) {
+          return res.status(404).json({
+            success: false,
+            message: "Savings goal not found",
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Savings goal updated successfully",
+          goal: serializeGoal(result),
+        });
+      } catch (error) {
+        console.error("Update savings goal error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
+
+  router.delete(
+    "/:id",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required",
+        });
+      }
+
+      const goalId = getGoalId(req);
+      if (!goalId) {
+        return res.status(400).json({
+          success: false,
+          message: "Savings goal ID is required",
+        });
+      }
+
+      try {
+        const result = await db.savingsGoal.deleteMany({
+          where: { id: goalId, userId },
+        });
+        if (result.count === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Savings goal not found",
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Savings goal deleted successfully",
+        });
+      } catch (error) {
+        console.error("Delete savings goal error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
+
+  router.post(
+    "/:id/contributions",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required",
+        });
+      }
+
+      const goalId = getGoalId(req);
+      if (!goalId) {
+        return res.status(400).json({
+          success: false,
+          message: "Savings goal ID is required",
+        });
+      }
+
+      const body: unknown = req.body;
+      if (!isRecord(body) || Object.hasOwn(body, "userId") || Object.hasOwn(body, "goalId")) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid contribution body is required",
+        });
+      }
+
+      const amount = parseAmount(body.amount);
+      if (!amount) {
+        return res.status(400).json({
+          success: false,
+          message: "Amount must be a positive monetary amount with at most two decimal places",
+        });
+      }
+
+      const date = parseDateOnly(body.date);
+      if (!date) {
+        return res.status(400).json({
+          success: false,
+          message: "Date must be a valid YYYY-MM-DD calendar date",
+        });
+      }
+
+      try {
+        const goal = await db.$transaction(async (transaction) => {
+          const ownedGoal = await transaction.savingsGoal.findFirst({
+            where: { id: goalId, userId },
+            select: { id: true },
+          });
+          if (!ownedGoal) return null;
+
+          await transaction.savingsContribution.create({
+            data: {
+              goalId: ownedGoal.id,
+              amount,
+              date,
+            },
+          });
+
+          return transaction.savingsGoal.findFirst({
+            where: { id: ownedGoal.id, userId },
+            include: goalInclude,
+          });
+        });
+
+        if (!goal) {
+          return res.status(404).json({
+            success: false,
+            message: "Savings goal not found",
+          });
+        }
+
+        return res.status(201).json({
+          success: true,
+          message: "Savings contribution added successfully",
+          goal: serializeGoal(goal),
+        });
+      } catch (error) {
+        console.error("Add savings contribution error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
+
+  return router;
+}
+
+export default createSavingsGoalsRouter();
