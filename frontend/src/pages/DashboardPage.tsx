@@ -84,15 +84,15 @@ type TransactionTrendsResponse = {
   data: TransactionTrend[]
 }
 
-type BudgetStatus = 'On track' | 'Close to limit' | 'Over budget'
+type BudgetStatus = 'On track' | 'Near limit' | 'Over budget' | 'No limit set'
 
 type Budget = {
-  id: string
+  id: string | null
   month: string
   category: BudgetCategory
-  limit: string
+  limit: string | null
   spent: string
-  remaining: string
+  remaining: string | null
   status: BudgetStatus
 }
 
@@ -219,24 +219,30 @@ function isBudgetCategory(value: unknown): value is BudgetCategory {
 }
 
 function isBudgetStatus(value: unknown): value is BudgetStatus {
-  return value === 'On track' || value === 'Close to limit' || value === 'Over budget'
+  return (
+    value === 'On track' ||
+    value === 'Near limit' ||
+    value === 'Over budget' ||
+    value === 'No limit set'
+  )
 }
 
 function isBudget(value: unknown): value is Budget {
   if (!isRecord(value)) return false
-  const moneyValues = [value.limit, value.spent, value.remaining]
+  const validMoney = (amount: unknown) =>
+    typeof amount === 'string' &&
+    amount.trim() !== '' &&
+    Number.isFinite(Number(amount))
   return (
-    typeof value.id === 'string' &&
+    (typeof value.id === 'string' || value.id === null) &&
     typeof value.month === 'string' &&
     /^\d{4}-(0[1-9]|1[0-2])$/.test(value.month) &&
     isBudgetCategory(value.category) &&
-    moneyValues.every(
-      (amount) =>
-        typeof amount === 'string' &&
-        amount.trim() !== '' &&
-        Number.isFinite(Number(amount)),
-    ) &&
-    Number(value.limit) > 0 &&
+    (value.limit === null || validMoney(value.limit)) &&
+    validMoney(value.spent) &&
+    (value.remaining === null || validMoney(value.remaining)) &&
+    (value.limit === null || (Number.isFinite(Number(value.limit)) && Number(value.limit) > 0)) &&
+    (value.remaining === null || Number.isFinite(Number(value.remaining))) &&
     isBudgetStatus(value.status)
   )
 }
@@ -254,7 +260,14 @@ function isBudgetsResponse(value: unknown): value is BudgetsResponse {
 }
 
 function isBudgetMutationResponse(value: unknown): value is BudgetMutationResponse {
-  return isRecord(value) && value.success === true && isBudget(value.budget)
+  return (
+    isRecord(value) &&
+    value.success === true &&
+    isBudget(value.budget) &&
+    value.budget.id !== null &&
+    value.budget.limit !== null &&
+    value.budget.remaining !== null
+  )
 }
 
 function isTransactionMutationResponse(value: unknown): value is CreateTransactionResponse {
@@ -272,6 +285,12 @@ function getResponseMessage(value: unknown): string | undefined {
 
 function getLocalMonthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function shiftMonth(month: string, offset: number): string {
+  const [year, monthNumber] = month.split('-').map(Number)
+  const shifted = new Date(Date.UTC(year, monthNumber - 1 + offset, 1))
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
 function getBrowserTimeZone(): string {
@@ -314,11 +333,19 @@ function DashboardPage() {
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [isBudgetsLoading, setIsBudgetsLoading] = useState(true)
   const [budgetsError, setBudgetsError] = useState('')
-  const [budgetCategory, setBudgetCategory] = useState<BudgetCategory>('FOOD')
+  const [budgetMonth, setBudgetMonth] = useState(() => getLocalMonthKey(new Date()))
+  const [budgetCategory, setBudgetCategory] = useState<BudgetCategory | ''>('')
   const [budgetLimit, setBudgetLimit] = useState('')
   const [isSavingBudget, setIsSavingBudget] = useState(false)
   const [budgetSaveMessage, setBudgetSaveMessage] = useState('')
   const [budgetSaveError, setBudgetSaveError] = useState('')
+  const [editingBudgetId, setEditingBudgetId] = useState<string | null>(null)
+  const [editingBudgetLimit, setEditingBudgetLimit] = useState('')
+  const [editingBudgetError, setEditingBudgetError] = useState('')
+  const [isUpdatingBudget, setIsUpdatingBudget] = useState(false)
+  const [deletingBudget, setDeletingBudget] = useState<Budget | null>(null)
+  const [isDeletingBudget, setIsDeletingBudget] = useState(false)
+  const [deleteBudgetError, setDeleteBudgetError] = useState('')
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
   const [amount, setAmount] = useState('')
@@ -336,6 +363,12 @@ function DashboardPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [refreshVersion, setRefreshVersion] = useState(0)
+
+  useEffect(() => {
+    if (!budgetSaveMessage) return
+    const timer = window.setTimeout(() => setBudgetSaveMessage(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [budgetSaveMessage])
 
   const handleUnauthorized = useCallback(() => {
     if (sessionExpired.current) return
@@ -389,12 +422,12 @@ function DashboardPage() {
       setSummaryError('')
       setIsBudgetsLoading(true)
       setBudgetsError('')
+      setBudgets([])
       setTrends([])
       setIsTrendsLoading(true)
       setTrendsError('')
 
       const headers = { Authorization: `Bearer ${token}` }
-      const month = getLocalMonthKey(new Date())
       const timeZone = getBrowserTimeZone()
 
       async function loadTransactions() {
@@ -501,7 +534,7 @@ function DashboardPage() {
 
       async function loadBudgets() {
         try {
-          const query = new URLSearchParams({ month, timeZone })
+          const query = new URLSearchParams({ month: budgetMonth, timeZone })
           const response = await fetch(`http://localhost:5000/api/budgets?${query.toString()}`, {
             headers,
             signal: controller.signal,
@@ -515,7 +548,7 @@ function DashboardPage() {
           if (
             !response.ok ||
             !isBudgetsResponse(result) ||
-            result.month !== month
+            result.month !== budgetMonth
           ) {
             throw new Error(
               response.ok
@@ -542,7 +575,7 @@ function DashboardPage() {
 
     void loadDashboardData()
     return () => controller.abort()
-  }, [handleUnauthorized, refreshVersion])
+  }, [budgetMonth, handleUnauthorized, refreshVersion])
 
   const resetForm = () => {
     setAmount('')
@@ -719,21 +752,35 @@ function DashboardPage() {
     setBudgetSaveMessage('')
     setBudgetSaveError('')
 
-    const numericLimit = Number(budgetLimit)
-    if (!budgetLimit.trim() || !Number.isFinite(numericLimit) || numericLimit <= 0) {
+    const normalizedLimit = budgetLimit.trim().replace(',', '.')
+    if (!budgetCategory) {
+      setBudgetSaveError('Choose an expense category without a saved limit.')
+      return
+    }
+    if (!/^\d+(?:\.\d{1,2})?$/.test(normalizedLimit)) {
+      setBudgetSaveError('Enter a monthly limit greater than zero.')
+      return
+    }
+    const numericLimit = Number(normalizedLimit)
+    if (!Number.isFinite(numericLimit) || numericLimit <= 0) {
       setBudgetSaveError('Enter a monthly limit greater than zero.')
       return
     }
 
     setIsSavingBudget(true)
     try {
-      const token = window.localStorage.getItem('token')
+      let token: string | null
+      try {
+        token = window.localStorage.getItem('token')
+      } catch {
+        setBudgetSaveError('Unable to access your saved sign-in. Please sign in again.')
+        return
+      }
       if (!token) {
         setBudgetSaveError("You're not signed in. Please sign in before saving a budget.")
         return
       }
 
-      const month = getLocalMonthKey(new Date())
       const response = await fetch('http://localhost:5000/api/budgets', {
         method: 'PUT',
         headers: {
@@ -741,7 +788,7 @@ function DashboardPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          month,
+          month: budgetMonth,
           timeZone: getBrowserTimeZone(),
           category: budgetCategory,
           limit: numericLimit,
@@ -756,25 +803,149 @@ function DashboardPage() {
       if (
         !response.ok ||
         !isBudgetMutationResponse(result) ||
-        result.budget.month !== month ||
+        result.budget.month !== budgetMonth ||
         result.budget.category !== budgetCategory
       ) {
         setBudgetSaveError(
-          response.status === 400
-            ? 'Check the category and enter a valid positive monthly limit.'
-            : 'Unable to save your monthly budget. Please try again.',
+          getResponseMessage(result) ??
+            (response.status === 400
+              ? 'Check the category and enter a valid positive monthly limit.'
+              : 'Unable to save your monthly budget. Please try again.'),
         )
         return
       }
 
+      setBudgets((current) =>
+        current.map((budget) =>
+          budget.category === result.budget.category ? result.budget : budget,
+        ),
+      )
+      setBudgetCategory('')
       setBudgetLimit('')
-      setBudgetSaveMessage(`${getCategoryLabel(budgetCategory)} monthly budget saved.`)
-      setRefreshVersion((version) => version + 1)
-    } catch {
+      setBudgetSaveMessage(`${getCategoryLabel(budgetCategory)} limit saved.`)
+    } catch (error) {
       if (sessionExpired.current) return
-      setBudgetSaveError('Unable to connect to the server. Please try again.')
+      setBudgetSaveError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to connect to the server. Please try again.',
+      )
     } finally {
       setIsSavingBudget(false)
+    }
+  }
+
+  const saveEditedBudget = async (budget: Budget) => {
+    const normalizedLimit = editingBudgetLimit.trim().replace(',', '.')
+    if (!/^\d+(?:\.\d{1,2})?$/.test(normalizedLimit) || Number(normalizedLimit) <= 0) {
+      setEditingBudgetError('Enter a monthly limit greater than zero with up to two decimal places.')
+      return
+    }
+
+    setIsUpdatingBudget(true)
+    setEditingBudgetError('')
+    try {
+      const token = window.localStorage.getItem('token')
+      if (!token) {
+        setEditingBudgetError("You're not signed in. Please sign in before saving a budget.")
+        return
+      }
+      const response = await fetch('http://localhost:5000/api/budgets', {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          month: budget.month,
+          timeZone: getBrowserTimeZone(),
+          category: budget.category,
+          limit: Number(normalizedLimit),
+        }),
+      })
+      if (response.status === 401) {
+        handleUnauthorized()
+        return
+      }
+      const result: unknown = await response.json().catch(() => null)
+      if (
+        !response.ok ||
+        !isBudgetMutationResponse(result) ||
+        result.budget.month !== budget.month ||
+        result.budget.category !== budget.category
+      ) {
+        setEditingBudgetError(
+          getResponseMessage(result) ?? 'Unable to update this budget limit. Please try again.',
+        )
+        return
+      }
+
+      setBudgets((current) =>
+        current.map((item) => item.category === budget.category ? result.budget : item),
+      )
+      setEditingBudgetId(null)
+      setEditingBudgetLimit('')
+      setBudgetSaveMessage(`${getCategoryLabel(budget.category)} limit updated.`)
+    } catch (error) {
+      if (!sessionExpired.current) {
+        setEditingBudgetError(
+          error instanceof Error ? error.message : 'Unable to connect to the server. Please try again.',
+        )
+      }
+    } finally {
+      setIsUpdatingBudget(false)
+    }
+  }
+
+  const deleteBudgetLimit = async () => {
+    if (!deletingBudget?.id || isDeletingBudget) return
+    setIsDeletingBudget(true)
+    setDeleteBudgetError('')
+    try {
+      const token = window.localStorage.getItem('token')
+      if (!token) {
+        setDeleteBudgetError("You're not signed in. Please sign in before deleting a budget.")
+        return
+      }
+      const response = await fetch(
+        `http://localhost:5000/api/budgets/${encodeURIComponent(deletingBudget.id)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      )
+      if (response.status === 401) {
+        handleUnauthorized()
+        return
+      }
+      const result: unknown = await response.json().catch(() => null)
+      if (!response.ok || !isDeleteResponse(result)) {
+        setDeleteBudgetError(
+          getResponseMessage(result) ?? 'Unable to delete this budget limit. Please try again.',
+        )
+        return
+      }
+      setBudgets((current) => current.map((item) =>
+        item.id === deletingBudget.id
+          ? {
+              ...item,
+              id: null,
+              limit: null,
+              remaining: null,
+              status: 'No limit set',
+            }
+          : item,
+      ))
+      setBudgetSaveMessage(`${getCategoryLabel(deletingBudget.category)} limit removed.`)
+      setDeletingBudget(null)
+    } catch (error) {
+      if (!sessionExpired.current) {
+        setDeleteBudgetError(
+          error instanceof Error ? error.message : 'Unable to connect to the server. Please try again.',
+        )
+      }
+    } finally {
+      setIsDeletingBudget(false)
     }
   }
 
@@ -791,12 +962,43 @@ function DashboardPage() {
   const budgetMonthLabel = new Intl.DateTimeFormat(undefined, {
     month: 'long',
     year: 'numeric',
-  }).format(new Date(`${currentBudgetMonth}-01T12:00:00`))
+  }).format(new Date(`${budgetMonth}-01T12:00:00`))
+  const savedBudgets = budgets.filter(
+    (budget): budget is Budget & { id: string; limit: string; remaining: string } =>
+      budget.id !== null && budget.limit !== null && budget.remaining !== null,
+  )
+  const totalBudget = savedBudgets.reduce((total, budget) => total + Number(budget.limit), 0)
+  const budgetedSpending = savedBudgets.reduce((total, budget) => total + Number(budget.spent), 0)
+  const totalMonthlySpending = budgets.reduce((total, budget) => total + Number(budget.spent), 0)
+  const totalRemaining = savedBudgets.reduce((total, budget) => total + Number(budget.remaining), 0)
+  const overallBudgetPercentage = totalBudget > 0
+    ? Math.max(0, (budgetedSpending / totalBudget) * 100)
+    : 0
+  const sortedBudgets = [...budgets].sort((first, second) => {
+    const firstHasLimit = first.limit !== null
+    const secondHasLimit = second.limit !== null
+    if (firstHasLimit !== secondHasLimit) return firstHasLimit ? -1 : 1
+    if (!firstHasLimit || !secondHasLimit) {
+      return categoryOptions.EXPENSE.findIndex((option) => option.value === first.category) -
+        categoryOptions.EXPENSE.findIndex((option) => option.value === second.category)
+    }
+    return Number(second.spent) / Number(second.limit) -
+      Number(first.spent) / Number(first.limit)
+  })
   const getBudgetProgress = (budget: Budget) => {
-    const limit = Number(budget.limit)
+    const limit = budget.limit === null ? 0 : Number(budget.limit)
     const spent = Number(budget.spent)
     if (!Number.isFinite(limit) || limit <= 0 || !Number.isFinite(spent)) return 0
-    return Math.min(100, Math.max(0, (spent / limit) * 100))
+    return Math.max(0, (spent / limit) * 100)
+  }
+  const changeBudgetMonth = (month: string) => {
+    setBudgetMonth(month)
+    setBudgetCategory('')
+    setBudgetLimit('')
+    setBudgetSaveError('')
+    setEditingBudgetId(null)
+    setEditingBudgetLimit('')
+    setEditingBudgetError('')
   }
   const maxValue = Math.max(summary?.totalIncome ?? 0, summary?.totalExpenses ?? 0)
   const getSharedPercentage = (value: number) =>
@@ -886,7 +1088,11 @@ function DashboardPage() {
             <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
             <span>Fin<span className="brand-accent">Track</span></span>
           </Link>
-          <span className="dashboard-header-label">Personal finance</span>
+          <nav className="dashboard-page-nav" aria-label="Account navigation">
+            <Link to="/dashboard" aria-current="page">Overview</Link>
+            <Link to="/savings-goals">Savings goals</Link>
+            <Link to="/recurring-transactions">Recurring</Link>
+          </nav>
           <button
             className="button button-primary"
             type="button"
@@ -1098,21 +1304,64 @@ function DashboardPage() {
         <section className="monthly-budgets-section" aria-labelledby="monthly-budgets-title">
           <div className="monthly-budgets-heading">
             <div>
-              <div className="eyebrow">{budgetMonthLabel}</div>
               <h2 id="monthly-budgets-title">Monthly Budgets</h2>
+            </div>
+            <div className="budget-month-navigation" aria-label="Budget month navigation">
+              <button
+                type="button"
+                className="budget-month-button"
+                onClick={() => changeBudgetMonth(shiftMonth(budgetMonth, -1))}
+                aria-label="Previous month"
+              >←</button>
+              <span>{budgetMonthLabel}</span>
+              <button
+                type="button"
+                className="budget-month-button"
+                onClick={() => changeBudgetMonth(shiftMonth(budgetMonth, 1))}
+                disabled={budgetMonth >= currentBudgetMonth}
+                aria-label="Next month"
+              >→</button>
+            </div>
+          </div>
+
+          <div className="budget-summary-strip" aria-label={`${budgetMonthLabel} budget summary`}>
+            <div><span>Total budget</span><strong>{currencyFormatter.format(totalBudget)}</strong></div>
+            <div><span>Total spent</span><strong>{currencyFormatter.format(totalMonthlySpending)}</strong></div>
+            <div>
+              <span>Remaining across limits</span>
+              <strong className={totalRemaining < 0 ? 'expense-value' : ''}>
+                {currencyFormatter.format(totalRemaining)}
+              </strong>
+            </div>
+            <div className="budget-summary-progress">
+              <div>
+                <span>Budgeted categories</span>
+                <strong>{Math.round(overallBudgetPercentage)}% used</strong>
+              </div>
+              <progress
+                value={Math.min(100, overallBudgetPercentage)}
+                max={100}
+                aria-label={`Budgeted categories ${Math.round(overallBudgetPercentage)}% used`}
+              />
             </div>
           </div>
 
           <form className="budget-form" onSubmit={handleSaveBudget} noValidate>
             <label className="transaction-field" htmlFor="budget-category">
-              Expense category
+              Category without a limit
               <select
                 id="budget-category"
                 name="category"
                 value={budgetCategory}
-                onChange={(event) => setBudgetCategory(event.target.value as BudgetCategory)}
+                onChange={(event) => {
+                  setBudgetCategory(event.target.value as BudgetCategory | '')
+                  setBudgetSaveError('')
+                }}
               >
-                {categoryOptions.EXPENSE.map((option) => (
+                <option value="">Choose a category</option>
+                {categoryOptions.EXPENSE.filter((option) =>
+                  !budgets.some((budget) => budget.category === option.value && budget.limit !== null),
+                ).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
@@ -1124,9 +1373,7 @@ function DashboardPage() {
                 <input
                   id="budget-limit"
                   name="limit"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
+                  type="text"
                   inputMode="decimal"
                   placeholder="0,00"
                   value={budgetLimit}
@@ -1136,16 +1383,15 @@ function DashboardPage() {
                 />
               </span>
             </label>
-            <button className="button button-primary budget-submit-button" type="submit" disabled={isSavingBudget}>
-              {isSavingBudget
-                ? 'Saving...'
-                : budgets.some((budget) => budget.month === currentBudgetMonth && budget.category === budgetCategory)
-                  ? 'Update limit'
-                  : 'Save budget'}
+            <button
+              className="button button-primary budget-submit-button"
+              type="submit"
+              disabled={isSavingBudget || !budgetCategory}
+            >
+              {isSavingBudget ? 'Saving...' : 'Set limit'}
             </button>
           </form>
 
-          {budgetSaveMessage && <p className="budget-save-message" role="status">{budgetSaveMessage}</p>}
           {budgetSaveError && <p className="dashboard-message dashboard-error budget-form-error" id="budget-save-error" role="alert">{budgetSaveError}</p>}
 
           {isBudgetsLoading ? (
@@ -1153,50 +1399,139 @@ function DashboardPage() {
           ) : budgetsError ? (
             <p className="budget-list-message budget-list-error" role="alert">{budgetsError}</p>
           ) : budgets.length === 0 ? (
-            <p className="budget-list-message">No monthly budgets yet. Set a limit above to get started.</p>
+            <p className="budget-list-message">No expense categories were returned for this month.</p>
           ) : (
             <ul className="budget-list">
-              {budgets.map((budget) => {
+              {sortedBudgets.map((budget) => {
                 const percentage = getBudgetProgress(budget)
-                const statusModifier =
-                  budget.status === 'Over budget'
-                    ? 'over'
-                    : budget.status === 'Close to limit'
-                      ? 'close'
+                const hasLimit = budget.limit !== null
+                const status = !hasLimit
+                  ? 'No limit set'
+                  : percentage >= 100
+                    ? 'Over budget'
+                    : percentage >= 80
+                      ? 'Near limit'
+                      : 'On track'
+                const statusModifier = status === 'Over budget'
+                  ? 'over'
+                  : status === 'Near limit'
+                    ? 'close'
+                    : status === 'No limit set'
+                      ? 'none'
                       : 'on-track'
+                const remaining = hasLimit ? Number(budget.limit) - Number(budget.spent) : null
 
                 return (
-                  <li className="budget-card" key={budget.id}>
+                  <li className={`budget-card${hasLimit ? '' : ' budget-card-unlimited'}`} key={budget.category}>
                     <div className="budget-card-heading">
                       <h3>{getCategoryLabel(budget.category)}</h3>
-                      <span className={`budget-status budget-status-${statusModifier}`}>{budget.status}</span>
+                      <div className="budget-card-status">
+                        <span className={`budget-status budget-status-${statusModifier}`}>{status}</span>
+                        {hasLimit && <strong>{percentage.toFixed(0)}%</strong>}
+                      </div>
                     </div>
                     <div className="budget-amounts">
-                      <span>Spent <strong>{currencyFormatter.format(Number(budget.spent))}</strong>{' '}of {currencyFormatter.format(Number(budget.limit))}</span>
-                      <span>Remaining <strong>{currencyFormatter.format(Number(budget.remaining))}</strong></span>
+                      <span>Spent <strong>{currencyFormatter.format(Number(budget.spent))}</strong>
+                        {hasLimit && <small>of {currencyFormatter.format(Number(budget.limit))}</small>}
+                      </span>
+                      <span>
+                        {remaining !== null
+                          ? remaining >= 0
+                            ? <>Remaining <strong>{currencyFormatter.format(remaining)}</strong></>
+                            : <>Over by <strong className="expense-value">{currencyFormatter.format(Math.abs(remaining))}</strong></>
+                          : <>Limit <strong>No limit set</strong></>}
+                      </span>
                     </div>
-                    <progress
-                      className={`budget-progress budget-progress-${statusModifier}`}
-                      value={percentage}
-                      max={100}
-                      aria-label={`${getCategoryLabel(budget.category)} budget ${Math.round(percentage)}% used`}
-                    />
-                    <div className="budget-card-footer">
-                      <span>{Math.round(percentage)}% used</span>
-                      <button
-                        className="budget-edit-button"
-                        type="button"
-                        onClick={() => {
-                          setBudgetCategory(budget.category)
-                          setBudgetLimit(budget.limit)
-                          setBudgetSaveMessage('')
-                          setBudgetSaveError('')
-                        }}
-                        aria-label={`Edit ${getCategoryLabel(budget.category)} monthly budget`}
-                      >
-                        Edit limit
-                      </button>
-                    </div>
+                    {hasLimit && (
+                      <progress
+                        className={`budget-progress budget-progress-${statusModifier}`}
+                        value={Math.min(100, percentage)}
+                        max={100}
+                        aria-label={`${getCategoryLabel(budget.category)} budget ${percentage.toFixed(0)}% used`}
+                      />
+                    )}
+                    {editingBudgetId === budget.id ? (
+                      <div className="budget-inline-editor">
+                        <label className="transaction-field" htmlFor={`budget-edit-${budget.category}`}>
+                          New monthly limit
+                          <span className="amount-input-wrap">
+                            <span aria-hidden="true">{currencySymbol}</span>
+                            <input
+                              id={`budget-edit-${budget.category}`}
+                              type="text"
+                              inputMode="decimal"
+                              value={editingBudgetLimit}
+                              onChange={(event) => {
+                                setEditingBudgetLimit(event.target.value)
+                                setEditingBudgetError('')
+                              }}
+                              aria-describedby={editingBudgetError ? `budget-edit-error-${budget.category}` : undefined}
+                            />
+                          </span>
+                        </label>
+                        {editingBudgetError && (
+                          <p className="dashboard-message dashboard-error budget-form-error" id={`budget-edit-error-${budget.category}`} role="alert">
+                            {editingBudgetError}
+                          </p>
+                        )}
+                        <div className="budget-card-actions">
+                          <button
+                            className="budget-edit-button"
+                            type="button"
+                            onClick={() => void saveEditedBudget(budget)}
+                            disabled={isUpdatingBudget}
+                            aria-label={`Save ${getCategoryLabel(budget.category)} limit`}
+                          >{isUpdatingBudget ? 'Saving...' : 'Save'}</button>
+                          <button
+                            className="budget-edit-button"
+                            type="button"
+                            onClick={() => {
+                              setEditingBudgetId(null)
+                              setEditingBudgetError('')
+                            }}
+                            disabled={isUpdatingBudget}
+                          >Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="budget-card-footer budget-card-actions">
+                        {hasLimit ? (
+                          <>
+                            <button
+                              className="budget-edit-button"
+                              type="button"
+                              onClick={() => {
+                                if (!budget.id || !budget.limit) return
+                                setEditingBudgetId(budget.id)
+                                setEditingBudgetLimit(budget.limit)
+                                setEditingBudgetError('')
+                              }}
+                              aria-label={`Edit ${getCategoryLabel(budget.category)} limit`}
+                            >Edit limit</button>
+                            <button
+                              className="transaction-delete-button budget-delete-button"
+                              type="button"
+                              onClick={() => {
+                                setDeletingBudget(budget)
+                                setDeleteBudgetError('')
+                              }}
+                              aria-label={`Delete ${getCategoryLabel(budget.category)} limit`}
+                            >Delete limit</button>
+                          </>
+                        ) : (
+                          <button
+                            className="budget-edit-button"
+                            type="button"
+                            onClick={() => {
+                              setBudgetCategory(budget.category)
+                              setBudgetSaveError('')
+                              document.getElementById('budget-limit')?.focus()
+                            }}
+                            aria-label={`Set ${getCategoryLabel(budget.category)} limit`}
+                          >Set limit</button>
+                        )}
+                      </div>
+                    )}
                   </li>
                 )
               })}
@@ -1364,6 +1699,66 @@ function DashboardPage() {
           )}
         </section>
       </div>
+
+      {budgetSaveMessage && (
+        <div className="budget-toast" role="status" aria-live="polite" aria-atomic="true">
+          <span aria-hidden="true">✓</span>{budgetSaveMessage}
+        </div>
+      )}
+
+      {deletingBudget && (
+        <div className="dashboard-modal-backdrop">
+          <section
+            className="dashboard-modal delete-confirmation"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-budget-title"
+            aria-describedby="delete-budget-description"
+          >
+            <div className="dashboard-modal-heading">
+              <div>
+                <div className="eyebrow">Monthly budget</div>
+                <h2 id="delete-budget-title">Remove this limit?</h2>
+              </div>
+              <button
+                className="modal-close-button"
+                type="button"
+                aria-label="Cancel deleting budget limit"
+                disabled={isDeletingBudget}
+                onClick={() => {
+                  setDeletingBudget(null)
+                  setDeleteBudgetError('')
+                }}
+              ><span aria-hidden="true">×</span></button>
+            </div>
+            <p className="delete-confirmation-copy" id="delete-budget-description">
+              This removes only the {getCategoryLabel(deletingBudget.category)} limit for {budgetMonthLabel}. Transactions and spending history will not be changed.
+            </p>
+            {deleteBudgetError && (
+              <p className="dashboard-message dashboard-error transaction-form-error" role="alert">
+                {deleteBudgetError}
+              </p>
+            )}
+            <div className="transaction-form-actions">
+              <button
+                className="button modal-cancel-button"
+                type="button"
+                disabled={isDeletingBudget}
+                onClick={() => {
+                  setDeletingBudget(null)
+                  setDeleteBudgetError('')
+                }}
+              >Cancel</button>
+              <button
+                className="button delete-confirm-button"
+                type="button"
+                disabled={isDeletingBudget}
+                onClick={() => void deleteBudgetLimit()}
+              >{isDeletingBudget ? 'Deleting...' : 'Delete limit'}</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {isFormOpen && (
         <div className="dashboard-modal-backdrop">

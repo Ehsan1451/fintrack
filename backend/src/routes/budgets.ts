@@ -18,6 +18,16 @@ type BudgetRecord = {
   limit: Prisma.Decimal;
 };
 
+type BudgetResponse = {
+  id: string | null;
+  month: string;
+  category: BudgetCategory;
+  limit: string | null;
+  spent: string;
+  remaining: string | null;
+  status: "On track" | "Near limit" | "Over budget" | "No limit set";
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -128,18 +138,35 @@ function getLocalMonthRange(
 function getSpendingStatus(
   spent: Prisma.Decimal,
   limit: Prisma.Decimal,
-): "On track" | "Close to limit" | "Over budget" {
+): "On track" | "Near limit" | "Over budget" {
   if (spent.greaterThanOrEqualTo(limit)) return "Over budget";
-  if (spent.greaterThanOrEqualTo(limit.mul("0.8"))) return "Close to limit";
+  if (spent.greaterThanOrEqualTo(limit.mul("0.8"))) return "Near limit";
   return "On track";
 }
 
-function serializeBudget(budget: BudgetRecord, spent: Prisma.Decimal) {
+function serializeBudget(
+  budget: BudgetRecord | undefined,
+  month: string,
+  category: BudgetCategory,
+  spent: Prisma.Decimal,
+): BudgetResponse {
+  if (!budget) {
+    return {
+      id: null,
+      month,
+      category,
+      limit: null,
+      spent: spent.toString(),
+      remaining: null,
+      status: "No limit set",
+    };
+  }
+
   const remaining = budget.limit.minus(spent);
   return {
     id: budget.id,
-    month: budget.month,
-    category: budget.category,
+    month,
+    category,
     limit: budget.limit.toString(),
     spent: spent.toString(),
     remaining: remaining.toString(),
@@ -195,20 +222,12 @@ export function createBudgetsRouter(
           },
         });
 
-        if (budgets.length === 0) {
-          return res.status(200).json({
-            success: true,
-            month: monthKey,
-            budgets: [],
-          });
-        }
-
         const spendingByCategory = await db.transaction.groupBy({
           by: ["category"],
           where: {
             userId,
             type: "EXPENSE",
-            category: { in: budgets.map((budget) => budget.category) },
+            category: { in: budgetCategories },
             date: { gte: start, lt: end },
           },
           _sum: { amount: true },
@@ -223,10 +242,12 @@ export function createBudgetsRouter(
         return res.status(200).json({
           success: true,
           month: monthKey,
-          budgets: budgets.map((budget) =>
+          budgets: budgetCategories.map((category) =>
             serializeBudget(
-              budget,
-              spending.get(budget.category) ?? new Prisma.Decimal(0),
+              budgets.find((budget) => budget.category === category),
+              monthKey,
+              category,
+              spending.get(category) ?? new Prisma.Decimal(0),
             ),
           ),
         });
@@ -334,11 +355,57 @@ export function createBudgetsRouter(
           success: true,
           budget: serializeBudget(
             budget,
+            monthKey,
+            budget.category,
             spending._sum.amount ?? new Prisma.Decimal(0),
           ),
         });
       } catch (error) {
         console.error("Upsert budget error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
+
+  router.delete(
+    "/:id",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const userId = req.user?.userId;
+      const param = req.params.id;
+      const budgetId = Array.isArray(param) ? param[0] : param;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required",
+        });
+      }
+      if (typeof budgetId !== "string" || budgetId.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Budget ID is required",
+        });
+      }
+
+      try {
+        const result = await db.budget.deleteMany({
+          where: { id: budgetId, userId },
+        });
+        if (result.count === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Budget not found",
+          });
+        }
+        return res.status(200).json({
+          success: true,
+          message: "Budget limit deleted",
+        });
+      } catch (error) {
+        console.error("Delete budget error:", error);
         return res.status(500).json({
           success: false,
           message: "Something went wrong",

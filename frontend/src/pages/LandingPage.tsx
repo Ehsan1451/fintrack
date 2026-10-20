@@ -66,6 +66,35 @@ function LandingPage() {
           </div>
         </section>
 
+        <section className="how-it-works-section section" id="how-it-works">
+          <div className="container">
+            <div className="section-heading">
+              <div>
+                <div className="eyebrow">A simple routine</div>
+                <h2>Make progress,<br /><em>one step at a time.</em></h2>
+              </div>
+              <p>Bring your day-to-day money into focus, set goals for it, and use a clear picture of your activity to guide what comes next.</p>
+            </div>
+            <ol className="workflow-grid">
+              <li className="workflow-card">
+                <span className="workflow-step">01</span>
+                <h3>Track your transactions</h3>
+                <p>Record income and expenses in one place, or set up recurring transactions for regular activity.</p>
+              </li>
+              <li className="workflow-card">
+                <span className="workflow-step">02</span>
+                <h3>Plan your spending</h3>
+                <p>Set monthly budgets by category and review how your spending compares with each limit.</p>
+              </li>
+              <li className="workflow-card">
+                <span className="workflow-step">03</span>
+                <h3>Build toward your goals</h3>
+                <p>Create savings goals, record contributions, and use your transaction summaries and trends to stay informed.</p>
+              </li>
+            </ol>
+          </div>
+        </section>
+
         <section className="security-section" id="security"><div className="security-inner container"><div className="security-badge"><span>⌁</span><small>Protected<br />around the clock</small></div><div><div className="eyebrow">Your trust comes first</div><h2>Your financial life<br />stays <em>yours.</em></h2></div><p>We use bank-level encryption and thoughtful privacy controls to protect your data. Your information is never sold, and you always stay in control.</p><a className="text-link" href="#get-started">Learn about security <span>↗</span></a></div></section>
 
         <section className="cta-section container" id="get-started"><div className="cta-card"><div className="cta-sun" /><div className="eyebrow">A clearer path starts here</div><h2>Feel good about<br /><em>your money.</em></h2><p>Join thousands of people building a healthier financial future, one small step at a time.</p><Link className="button button-light" to="/register">Get started for free <span aria-hidden="true">↗</span></Link></div></section>

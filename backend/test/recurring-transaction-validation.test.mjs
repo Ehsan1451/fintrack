@@ -3,8 +3,10 @@ import test from "node:test";
 import {
   parseRecurringTransactionCreate,
   parseRecurringTransactionPatch,
+  validateRecurringTransactionForReactivation,
   validateRecurringTransactionSchedule,
 } from "../src/utils/recurring-transaction-validation.ts";
+import { Prisma } from "@prisma/client";
 
 const validRule = {
   amount: "125.50",
@@ -106,4 +108,40 @@ test("PATCH accepts a valid schedule change and nullable end date", () => {
   assert.equal(patch.value.startDate?.toISOString(), "2026-02-01T00:00:00.000Z");
   assert.equal(patch.value.endDate, null);
   assert.equal(patch.value.interval, 2);
+});
+
+test("reactivation eligibility follows the inclusive end date in the rule timezone", () => {
+  const rule = {
+    amount: new Prisma.Decimal("1.00"),
+    type: "EXPENSE",
+    category: "FOOD",
+    frequency: "MONTHLY",
+    interval: 1,
+    startDate: new Date("2026-10-19T00:00:00.000Z"),
+    nextRunDate: new Date("2026-10-19T00:00:00.000Z"),
+    endDate: new Date("2026-10-24T00:00:00.000Z"),
+    timeZone: "Europe/Paris",
+  };
+
+  assert.equal(
+    validateRecurringTransactionForReactivation(
+      rule,
+      new Date("2026-10-23T21:59:00.000Z"),
+    ),
+    null,
+  );
+  assert.equal(
+    validateRecurringTransactionForReactivation(
+      rule,
+      new Date("2026-10-23T22:00:00.000Z"),
+    ),
+    null,
+  );
+  assert.match(
+    validateRecurringTransactionForReactivation(
+      rule,
+      new Date("2026-10-24T22:00:00.000Z"),
+    ),
+    /schedule has already ended/,
+  );
 });

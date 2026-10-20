@@ -1,18 +1,77 @@
 :root {
-  font-family: Georgia, 'Times New Roman', serif;
-  color: #152d2a;
-  background: #f8f8f3;
+  font-family: 'DM Sans', 'Segoe UI', sans-serif;
+  color: #183b31;
+  background: #f5f5ef;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+
+  --ink: #183b31;
+  --muted: #718078;
+  --green: #147a56;
+  --paper: #f5f5ef;
+  --line: #e1e7df;
+  --serif: 'DM Serif Display', Georgia, serif;
+  --sans: 'DM Sans', 'Segoe UI', sans-serif;
+
+  --forest-950: #102b24;
+  --forest-800: #183b31;
+  --forest-700: #205442;
+  --emerald-700: #147a56;
+  --emerald-600: #198c62;
+  --emerald-100: #e7f3e9;
+  --cream-50: #fbfbf7;
+  --cream-100: #f5f5ef;
+  --surface: #ffffff;
+  --border: #e1e7df;
+  --text-primary: #183b31;
+  --text-secondary: #718078;
+  --text-subtle: #89958e;
+  --success: #16734e;
+  --danger: #a9433c;
+  --warning: #8e6817;
+  --shadow-card: 0 8px 26px rgba(28, 56, 43, 0.055);
+  --shadow-raised: 0 18px 48px rgba(23, 55, 40, 0.13);
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --focus-ring: 0 0 0 3px rgba(25, 140, 98, 0.2);
 }
 
 * {
   box-sizing: border-box;
 }
 
-body {
-  margin: 0;
+html {
   min-width: 320px;
+  scroll-behavior: smooth;
+  scroll-padding-top: 24px;
+  background: var(--paper);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
 }
 
 a {
@@ -20,7 +79,31 @@ a {
   text-decoration: none;
 }
 
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(25, 140, 98, 0.48);
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: #cfe8d5;
+  color: var(--forest-950);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -10,6 +10,7 @@ if (!connectionString) {
 
 const adapter = new PrismaPg({
   connectionString,
+  connectionTimeoutMillis: 5_000,
 });
 
 const prisma = new PrismaClient({
@@ -17,4 +18,3 @@ const prisma = new PrismaClient({
 });
 
 export default prisma;
-

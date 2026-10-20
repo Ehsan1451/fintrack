@@ -1,4 +1,9 @@
-import { Prisma } from "@prisma/client";
+import {
+  Prisma,
+  type RecurrenceFrequency,
+  type TransactionCategory,
+  type TransactionType,
+} from "@prisma/client";
 import { Router, type RequestHandler, type Response } from "express";
 import type { PrismaClient } from "@prisma/client";
 import prisma from "../prisma.js";
@@ -47,10 +52,10 @@ function getRuleId(req: AuthenticatedRequest): string | null {
 function serializeRule(rule: {
   id: string;
   amount: Prisma.Decimal;
-  type: string;
-  category: string;
+  type: TransactionType;
+  category: TransactionCategory;
   description: string | null;
-  frequency: string;
+  frequency: RecurrenceFrequency;
   interval: number;
   startDate: Date;
   nextRunDate: Date;
@@ -59,13 +64,27 @@ function serializeRule(rule: {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
-}) {
+  _count?: { occurrences: number };
+}, hasGeneratedOccurrences = rule._count?.occurrences !== undefined
+  ? rule._count.occurrences > 0
+  : false, now: Date = new Date(), cursorIsUnoccupied = true) {
+  const ruleFields = { ...rule };
+  delete ruleFields._count;
+  const endDate = rule.endDate ? serializeRecurringDate(rule.endDate) : null;
+  const storedNextRunDate = serializeRecurringDate(rule.nextRunDate);
+  const scheduleEnded =
+    endDate !== null && storedNextRunDate > endDate;
   return {
-    ...rule,
+    ...ruleFields,
     amount: rule.amount.toString(),
     startDate: serializeRecurringDate(rule.startDate),
-    nextRunDate: serializeRecurringDate(rule.nextRunDate),
-    endDate: rule.endDate ? serializeRecurringDate(rule.endDate) : null,
+    nextRunDate: scheduleEnded ? null : storedNextRunDate,
+    endDate,
+    hasGeneratedOccurrences,
+    canReactivate:
+      !rule.isActive &&
+      cursorIsUnoccupied &&
+      validateRecurringTransactionForReactivation(rule, now) === null,
   };
 }
 
@@ -82,6 +101,7 @@ function validateCompleteRule(
 export function createRecurringTransactionsRouter(
   db: PrismaClient = prisma,
   authenticate: RequestHandler = authenticateToken,
+  getNow: () => Date = () => new Date(),
 ): Router {
 const router = Router();
 
@@ -93,13 +113,43 @@ router.get(
     if (!userId) return;
 
     try {
+      const now = getNow();
       const rules = await db.recurringTransaction.findMany({
         where: { userId },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        include: { _count: { select: { occurrences: true } } },
       });
+      const eligibleRules = rules.filter(
+        (rule) =>
+          !rule.isActive &&
+          validateRecurringTransactionForReactivation(rule, now) === null,
+      );
+      const occupiedCursorRuleIds = new Set<string>();
+      for (let offset = 0; offset < eligibleRules.length; offset += 100) {
+        const cursorRules = eligibleRules.slice(offset, offset + 100);
+        const occurrences = await db.recurringOccurrence.findMany({
+          where: {
+            OR: cursorRules.map((rule) => ({
+              recurringTransactionId: rule.id,
+              scheduledDate: rule.nextRunDate,
+            })),
+          },
+          select: { recurringTransactionId: true },
+        });
+        for (const occurrence of occurrences) {
+          occupiedCursorRuleIds.add(occurrence.recurringTransactionId);
+        }
+      }
       return res.status(200).json({
         success: true,
-        recurringTransactions: rules.map(serializeRule),
+        recurringTransactions: rules.map((rule) =>
+          serializeRule(
+            rule,
+            (rule._count?.occurrences ?? 0) > 0,
+            now,
+            !occupiedCursorRuleIds.has(rule.id),
+          ),
+        ),
       });
     } catch {
       console.error("Get recurring transactions failed");
@@ -137,7 +187,7 @@ router.post(
       });
       return res.status(201).json({
         success: true,
-        recurringTransaction: serializeRule(rule),
+        recurringTransaction: serializeRule(rule, false, getNow()),
       });
     } catch {
       console.error("Create recurring transaction failed");
@@ -288,10 +338,19 @@ router.post(
           where: { id: ruleId, userId },
         });
         if (!rule) return { kind: "not-found" as const };
-        if (rule.isActive) return { kind: "already-active" as const, rule };
+        const occurrenceCount = await tx.recurringOccurrence.count({
+          where: { recurringTransactionId: ruleId },
+        });
+        if (rule.isActive) {
+          return {
+            kind: "already-active" as const,
+            rule,
+            hasGeneratedOccurrences: occurrenceCount > 0,
+          };
+        }
 
         const scheduleError =
-          validateRecurringTransactionForReactivation(rule);
+          validateRecurringTransactionForReactivation(rule, getNow());
         if (scheduleError) {
           return { kind: "invalid-schedule" as const, message: scheduleError };
         }
@@ -311,7 +370,11 @@ router.post(
           where: { id: ruleId, userId },
           data: { isActive: true },
         });
-        return { kind: "reactivated" as const, rule: reactivatedRule };
+        return {
+          kind: "reactivated" as const,
+          rule: reactivatedRule,
+          hasGeneratedOccurrences: occurrenceCount > 0,
+        };
       });
 
       if (result.kind === "not-found") {
@@ -334,7 +397,13 @@ router.post(
       }
       return res.status(200).json({
         success: true,
-        recurringTransaction: serializeRule(result.rule),
+        recurringTransaction: serializeRule(
+          result.rule,
+          "hasGeneratedOccurrences" in result
+            ? result.hasGeneratedOccurrences
+            : false,
+          getNow(),
+        ),
         ...(result.kind === "already-active"
           ? { message: "Recurring transaction is already active" }
           : {}),

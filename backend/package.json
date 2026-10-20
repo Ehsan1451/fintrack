@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "tsx --test test/recurrence-date.test.mjs test/transactions-ownership.test.mjs test/budgets-ownership.test.mjs test/savings-goals-ownership.test.mjs",
+    "test": "tsx --test test/recurrence-date.test.mjs test/recurring-transaction-validation.test.mjs test/recurring-transactions-lifecycle.test.mjs test/auth-middleware.test.mjs test/auth-login.test.mjs test/transactions-ownership.test.mjs test/budgets-ownership.test.mjs test/savings-goals-ownership.test.mjs",
     "test:recurring-integration": "tsx --test test/recurring-generation.integration.test.mjs",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

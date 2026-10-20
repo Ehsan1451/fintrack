@@ -3,6 +3,7 @@ import { once } from "node:events";
 import test from "node:test";
 import express from "express";
 import { Prisma } from "@prisma/client";
+import jwt from "jsonwebtoken";
 
 process.env.JWT_SECRET = "transactions-ownership-test-only";
 process.env.DATABASE_URL = "postgresql://test-only:test-only@127.0.0.1:1/test-only";
@@ -10,6 +11,7 @@ process.env.DATABASE_URL = "postgresql://test-only:test-only@127.0.0.1:1/test-on
 const { createTransactionsRouter } = await import(
   "../src/routes/transactions.ts"
 );
+const { authenticateToken } = await import("../src/middleware/auth.ts");
 
 const authenticatedUserId = "user-A";
 
@@ -165,20 +167,20 @@ function createHarness({ authenticated = true } = {}) {
     ),
   ]);
 
-  const authenticate = (req, _res, next) => {
-    if (authenticated) {
-      req.user = {
-        userId: authenticatedUserId,
-        email: "user-a@example.invalid",
-      };
-    }
-    next();
+  return {
+    ...database,
+    authenticated,
+    router: createTransactionsRouter(database.db, authenticateToken),
   };
-
-  return { ...database, router: createTransactionsRouter(database.db, authenticate) };
 }
 
-async function requestWith(harness, path, method = "GET", body) {
+async function requestWith(
+  harness,
+  path,
+  method = "GET",
+  body,
+  userId = authenticatedUserId,
+) {
   const app = express();
   app.use(express.json());
   app.use("/api/transactions", harness.router);
@@ -187,17 +189,23 @@ async function requestWith(harness, path, method = "GET", body) {
   const address = server.address();
 
   try {
+    const headers = {};
+    if (harness.authenticated) {
+      headers.authorization = `Bearer ${jwt.sign(
+        { userId, email: `${userId}@example.invalid` },
+        process.env.JWT_SECRET,
+        { expiresIn: "5m" },
+      )}`;
+    }
+    if (body !== undefined) headers["content-type"] = "application/json";
+
+    const requestOptions = { method };
+    if (Object.keys(headers).length > 0) requestOptions.headers = headers;
+    if (body !== undefined) requestOptions.body = JSON.stringify(body);
+
     const response = await fetch(
       `http://127.0.0.1:${address.port}/api/transactions${path}`,
-      {
-        method,
-        ...(body === undefined
-          ? {}
-          : {
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(body),
-            }),
-      },
+      requestOptions,
     );
     return { response, body: await response.json() };
   } finally {
@@ -216,6 +224,22 @@ test("GET / returns only transactions owned by the authenticated user", async ()
     [
       { id: "expense-A", userId: "user-A" },
       { id: "transaction-A", userId: "user-A" },
+    ],
+  );
+
+  const userBResult = await requestWith(
+    harness,
+    "/",
+    "GET",
+    undefined,
+    "user-B",
+  );
+  assert.equal(userBResult.response.status, 200);
+  assert.deepEqual(
+    userBResult.body.transactions.map(({ id, userId }) => ({ id, userId })),
+    [
+      { id: "expense-B", userId: "user-B" },
+      { id: "transaction-B", userId: "user-B" },
     ],
   );
 });

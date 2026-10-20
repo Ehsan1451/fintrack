@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { getRecurringLifecycleState } from '../utils/recurring-lifecycle.js'
 import '../App.css'
 
 type TransactionType = 'INCOME' | 'EXPENSE'
@@ -28,10 +29,12 @@ type RecurringTransaction = {
   frequency: RecurrenceFrequency
   interval: number
   startDate: string
-  nextRunDate: string
+  nextRunDate: string | null
   endDate: string | null
   timeZone: string
   isActive: boolean
+  hasGeneratedOccurrences: boolean
+  canReactivate: boolean
   createdAt: string
   updatedAt: string
 }
@@ -81,11 +84,14 @@ const categoryOptions: Record<TransactionType, { value: TransactionCategory; lab
 }
 
 const allCategories = [...categoryOptions.INCOME, ...categoryOptions.EXPENSE]
+const supportedTimeZones = [
+  ...new Set(['UTC', ...Intl.supportedValuesOf('timeZone')]),
+].sort()
 const currencyFormatter = new Intl.NumberFormat('fr-FR', {
   style: 'currency',
   currency: 'EUR',
 })
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
+const dateFormatter = new Intl.DateTimeFormat('fr-FR', {
   year: 'numeric',
   month: 'short',
   day: 'numeric',
@@ -135,10 +141,12 @@ function isRecurringTransaction(value: unknown): value is RecurringTransaction {
     Number.isInteger(value.interval) &&
     Number(value.interval) >= 1 &&
     isValidDateOnly(value.startDate) &&
-    isValidDateOnly(value.nextRunDate) &&
+    (value.nextRunDate === null || isValidDateOnly(value.nextRunDate)) &&
     (value.endDate === null || isValidDateOnly(value.endDate)) &&
     typeof value.timeZone === 'string' &&
     typeof value.isActive === 'boolean' &&
+    typeof value.hasGeneratedOccurrences === 'boolean' &&
+    typeof value.canReactivate === 'boolean' &&
     isTimestamp(value.createdAt) &&
     isTimestamp(value.updatedAt)
   )
@@ -181,6 +189,16 @@ function getCategoryLabel(value: TransactionCategory): string {
 }
 
 function getFrequencyLabel(frequency: RecurrenceFrequency, interval: number): string {
+  if (interval === 1) {
+    const labels: Record<RecurrenceFrequency, string> = {
+      DAILY: 'Daily',
+      WEEKLY: 'Weekly',
+      MONTHLY: 'Monthly',
+      YEARLY: 'Yearly',
+    }
+    return labels[frequency]
+  }
+
   const labels: Record<RecurrenceFrequency, [string, string]> = {
     DAILY: ['day', 'days'],
     WEEKLY: ['week', 'weeks'],
@@ -223,6 +241,7 @@ function RecurringTransactionsPage() {
   const ruleActionLock = useRef(false)
   const dialogRef = useRef<HTMLElement>(null)
   const [rules, setRules] = useState<RecurringTransaction[]>([])
+  const [now, setNow] = useState(() => new Date())
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [refreshVersion, setRefreshVersion] = useState(0)
@@ -234,6 +253,18 @@ function RecurringTransactionsPage() {
   const [successMessage, setSuccessMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [pendingRuleAction, setPendingRuleAction] = useState<PendingRuleAction>(null)
+  const [ruleFilter, setRuleFilter] = useState<'all' | 'active' | 'inactive'>('all')
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!successMessage) return
+    const timer = window.setTimeout(() => setSuccessMessage(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [successMessage])
 
   const handleUnauthorized = useCallback(() => {
     if (sessionExpired.current) return
@@ -323,6 +354,37 @@ function RecurringTransactionsPage() {
 
   const categories = useMemo(() => categoryOptions[form.type], [form.type])
   const activeCount = rules.filter((rule) => rule.isActive).length
+  const inactiveCount = rules.length - activeCount
+  const scheduledCount = rules.filter(
+    (rule) =>
+      rule.isActive &&
+      rule.nextRunDate !== null &&
+      getRecurringLifecycleState(rule, now) === 'active',
+  ).length
+  const displayedRules = useMemo(
+    () =>
+      rules.filter((rule) =>
+        ruleFilter === 'all' ||
+        (ruleFilter === 'active' ? rule.isActive : !rule.isActive),
+      ),
+    [ruleFilter, rules],
+  )
+  const ruleGroups = [
+    {
+      id: 'active',
+      label: 'Active schedules',
+      rules: displayedRules.filter((rule) => rule.isActive),
+    },
+    {
+      id: 'inactive',
+      label: 'Inactive schedules',
+      rules: displayedRules.filter((rule) => !rule.isActive),
+    },
+  ].filter((group) => group.rules.length > 0)
+  const formTimeZones = useMemo(
+    () => [...new Set([...supportedTimeZones, form.timeZone])].sort(),
+    [form.timeZone],
+  )
 
   const openCreateForm = () => {
     setForm(getInitialForm())
@@ -473,14 +535,10 @@ function RecurringTransactionsPage() {
         )
         return
       }
-      setRules((current) =>
-        current.map((rule) =>
-          rule.id === selectedRule.id ? { ...rule, isActive: false } : rule,
-        ),
-      )
       setModalMode(null)
       setSelectedRule(null)
       setSuccessMessage('Recurring transaction deactivated.')
+      setRefreshVersion((version) => version + 1)
     } catch {
       if (!sessionExpired.current) {
         setActionError('Unable to connect to the server. Please try again.')
@@ -581,9 +639,10 @@ function RecurringTransactionsPage() {
             <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
             <span>Fin<span className="brand-accent">Track</span></span>
           </Link>
-          <nav className="recurring-page-nav" aria-label="Account navigation">
-            <Link to="/dashboard">Dashboard</Link>
+          <nav className="dashboard-page-nav recurring-page-nav" aria-label="Account navigation">
+            <Link to="/dashboard">Overview</Link>
             <Link to="/savings-goals">Savings goals</Link>
+            <Link to="/recurring-transactions" aria-current="page">Recurring</Link>
           </nav>
           <button className="button button-primary" type="button" onClick={logOut}>Log out</button>
         </header>
@@ -595,18 +654,51 @@ function RecurringTransactionsPage() {
         </section>
 
         <section className="monthly-budgets-section" aria-label="Recurring transactions">
-          <div className="monthly-budgets-heading">
+          <div className="monthly-budgets-heading recurring-transactions-heading">
             <div>
               <div className="eyebrow">Your schedules</div>
-              <h2>{rules.length} rules · {activeCount} active</h2>
+              <h2>Recurring rules</h2>
             </div>
-            <button className="button button-primary add-transaction-button" type="button" onClick={openCreateForm}>
-              Create rule <span aria-hidden="true">+</span>
-            </button>
+            <div className="recurring-list-controls">
+              <button className="button button-primary add-transaction-button" type="button" onClick={openCreateForm}>
+                Create rule <span aria-hidden="true">+</span>
+              </button>
+            </div>
           </div>
 
+          <div className="recurring-summary-strip" aria-label="Recurring rule summary">
+            <div><span>Total rules</span><strong>{rules.length}</strong></div>
+            <div><span>Active</span><strong>{activeCount}</strong></div>
+            <div><span>Inactive <small>including ended</small></span><strong>{inactiveCount}</strong></div>
+            <div><span>With next run</span><strong>{scheduledCount}</strong></div>
+          </div>
+
+          <nav className="recurring-filter-tabs" aria-label="Filter recurring rules">
+            {([
+              ['all', 'All', rules.length],
+              ['active', 'Active', activeCount],
+              ['inactive', 'Inactive', inactiveCount],
+            ] as const).map(([filter, label, count]) => (
+              <button
+                key={filter}
+                className="recurring-filter-tab"
+                type="button"
+                aria-pressed={ruleFilter === filter}
+                onClick={() => setRuleFilter(filter)}
+              >
+                {label}<span>{count}</span>
+              </button>
+            ))}
+            <p className="recurring-filter-result" aria-live="polite">
+              Showing {displayedRules.length} of {rules.length} rules
+            </p>
+          </nav>
+
+          <aside className="recurring-history-note" role="note">
+            Generated transactions are preserved. Rules with generated history cannot be edited or permanently deleted; deactivate a rule to stop future runs. Reactivation is offered only when the schedule has a valid next date.
+          </aside>
+
           {actionError && <p className="dashboard-message dashboard-error" role="alert">{actionError}</p>}
-          {successMessage && <p className="recurring-success-message" role="status">{successMessage}</p>}
 
           {isLoading ? (
             <p className="budget-list-message" role="status">Loading recurring transactions...</p>
@@ -623,15 +715,38 @@ function RecurringTransactionsPage() {
             </div>
           ) : rules.length === 0 ? (
             <p className="budget-list-message">No recurring transactions yet. Create a rule to get started.</p>
+          ) : displayedRules.length === 0 ? (
+            <p className="budget-list-message">No rules match this filter.</p>
           ) : (
-            <ul className="budget-list recurring-rules-list">
-              {rules.map((rule) => (
-                <li className="budget-card recurring-rule-card" key={rule.id}>
+            <div className="recurring-rule-groups">
+              {ruleGroups.map((group) => (
+                <section className="recurring-rule-group" key={group.id} aria-labelledby={`recurring-group-${group.id}`}>
+                  <div className="recurring-rule-group-heading">
+                    <h3 id={`recurring-group-${group.id}`}>{group.label}</h3>
+                    <span>{group.rules.length}</span>
+                    {group.id === 'inactive' && <small>Includes schedules ended by date</small>}
+                  </div>
+                  <ul className="budget-list recurring-rules-list">
+                    {group.rules.map((rule) => {
+                const lifecycleState = getRecurringLifecycleState(rule, now)
+                const statusLabel =
+                  lifecycleState === 'active'
+                    ? 'Active'
+                    : lifecycleState === 'inactive'
+                      ? 'Paused'
+                      : lifecycleState === 'ended'
+                        ? 'Ended'
+                        : lifecycleState === 'no-future-occurrences'
+                          ? 'No next date'
+                          : 'Check schedule'
+                return (
+                  <li className="budget-card recurring-rule-card" key={rule.id}>
                   <div className="budget-card-heading">
                     <h3>{rule.description?.trim() || 'Recurring transaction'}</h3>
-                    <span className={`recurring-status${rule.isActive ? ' recurring-status-active' : ''}`}>
-                      {rule.isActive ? 'Active' : 'Inactive'}
+                    <span className={`recurring-status${lifecycleState === 'active' ? ' recurring-status-active' : ''}${lifecycleState !== 'active' ? ' recurring-status-archived' : ''}`}>
+                      {statusLabel}
                     </span>
+                    {rule.hasGeneratedOccurrences && <span className="recurring-history-marker">History</span>}
                   </div>
                   <div className="recurring-rule-amounts">
                     <strong className={rule.type === 'INCOME' ? 'income-value' : 'expense-value'}>
@@ -645,23 +760,24 @@ function RecurringTransactionsPage() {
                   <dl className="recurring-rule-details">
                     <div><dt>Schedule</dt><dd>{getFrequencyLabel(rule.frequency, rule.interval)}</dd></div>
                     <div><dt>Start date</dt><dd><time dateTime={rule.startDate}>{formatDate(rule.startDate)}</time></dd></div>
-                    <div><dt>Next run</dt><dd><time dateTime={rule.nextRunDate}>{formatDate(rule.nextRunDate)}</time></dd></div>
+                    <div><dt>Next run</dt><dd>{rule.nextRunDate && lifecycleState !== 'ended' && lifecycleState !== 'no-future-occurrences' ? <time dateTime={rule.nextRunDate}>{formatDate(rule.nextRunDate)}</time> : lifecycleState === 'ended' ? 'Schedule ended' : lifecycleState === 'invalid-time-zone' ? 'Unavailable — check schedule time zone' : 'No future occurrences within end date'}</dd></div>
                     <div><dt>End date</dt><dd>{rule.endDate ? <time dateTime={rule.endDate}>{formatDate(rule.endDate)}</time> : 'No end date'}</dd></div>
                     <div><dt>Time zone</dt><dd>{rule.timeZone}</dd></div>
                   </dl>
                   <div className="budget-card-footer recurring-rule-footer">
-                    <span>{rule.description ? `Description: ${rule.description}` : 'No description'}</span>
                     {rule.isActive ? (
                       <div className="transaction-row-controls">
-                        <button
-                          className="budget-edit-button"
-                          type="button"
-                          onClick={() => openEditForm(rule)}
-                          disabled={pendingRuleAction !== null}
-                          aria-label={`Edit ${rule.description || 'recurring transaction'}`}
-                        >
-                          Edit
-                        </button>
+                        {!rule.hasGeneratedOccurrences && (
+                          <button
+                            className="budget-edit-button"
+                            type="button"
+                            onClick={() => openEditForm(rule)}
+                            disabled={pendingRuleAction !== null}
+                            aria-label={`Edit ${rule.description || 'recurring transaction'}`}
+                          >
+                            Edit
+                          </button>
+                        )}
                         <button
                           className="transaction-delete-button"
                           type="button"
@@ -679,37 +795,47 @@ function RecurringTransactionsPage() {
                       </div>
                     ) : (
                       <div className="transaction-row-controls">
-                        <button
-                          className="budget-edit-button"
-                          type="button"
-                          onClick={() => void reactivateRule(rule)}
-                          disabled={pendingRuleAction !== null}
-                          aria-label={`Reactivate ${rule.description || 'recurring transaction'}`}
-                        >
-                          {pendingRuleAction?.id === rule.id && pendingRuleAction.action === 'reactivate'
-                            ? 'Reactivating...'
-                            : 'Reactivate'}
-                        </button>
-                        <button
-                          className="transaction-delete-button"
-                          type="button"
-                          onClick={() => {
-                            setSelectedRule(rule)
-                            setActionError('')
-                            setSuccessMessage('')
-                            setModalMode('permanent-delete')
-                          }}
-                          disabled={pendingRuleAction !== null}
-                          aria-label={`Permanently delete ${rule.description || 'recurring transaction'}`}
-                        >
-                          Delete permanently
-                        </button>
+                        {rule.canReactivate &&
+                          lifecycleState !== 'ended' &&
+                          lifecycleState !== 'no-future-occurrences' && (
+                          <button
+                            className="budget-edit-button"
+                            type="button"
+                            onClick={() => void reactivateRule(rule)}
+                            disabled={pendingRuleAction !== null}
+                            aria-label={`Reactivate ${rule.description || 'recurring transaction'}`}
+                          >
+                            {pendingRuleAction?.id === rule.id && pendingRuleAction.action === 'reactivate'
+                              ? 'Reactivating...'
+                              : 'Reactivate'}
+                          </button>
+                        )}
+                        {!rule.hasGeneratedOccurrences && (
+                          <button
+                            className="transaction-delete-button"
+                            type="button"
+                            onClick={() => {
+                              setSelectedRule(rule)
+                              setActionError('')
+                              setSuccessMessage('')
+                              setModalMode('permanent-delete')
+                            }}
+                            disabled={pendingRuleAction !== null}
+                            aria-label={`Permanently delete ${rule.description || 'recurring transaction'}`}
+                          >
+                            Delete permanently
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
-                </li>
+                  </li>
+                )
+                    })}
+                  </ul>
+                </section>
               ))}
-            </ul>
+            </div>
           )}
           <p className="budget-list-message recurring-back-links">
             <Link className="text-link" to="/dashboard">Back to dashboard <span aria-hidden="true">→</span></Link>
@@ -717,6 +843,13 @@ function RecurringTransactionsPage() {
           </p>
         </section>
       </div>
+
+      {successMessage && (
+        <div className="recurring-toast" role="status" aria-live="polite" aria-atomic="true">
+          <span aria-hidden="true">✓</span>
+          {successMessage}
+        </div>
+      )}
 
       {modalMode && (
         <div
@@ -731,6 +864,7 @@ function RecurringTransactionsPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="recurring-modal-title"
+            aria-describedby={modalMode === 'deactivate' || modalMode === 'permanent-delete' ? 'recurring-confirmation-description' : undefined}
             tabIndex={-1}
           >
             <div className="dashboard-modal-heading">
@@ -743,18 +877,20 @@ function RecurringTransactionsPage() {
                   {modalMode === 'permanent-delete' && 'Delete this rule permanently?'}
                 </h2>
               </div>
-              <button
-                className="modal-close-button"
-                type="button"
-                onClick={closeModal}
-                disabled={isSubmitting || pendingRuleAction !== null}
-                aria-label="Close"
-              >×</button>
+              {modalMode !== 'deactivate' && modalMode !== 'permanent-delete' && (
+                <button
+                  className="modal-close-button"
+                  type="button"
+                  onClick={closeModal}
+                  disabled={isSubmitting || pendingRuleAction !== null}
+                  aria-label="Close"
+                >×</button>
+              )}
             </div>
 
             {modalMode === 'deactivate' || modalMode === 'permanent-delete' ? (
               <>
-                <p className="delete-confirmation-copy" role={modalMode === 'permanent-delete' ? 'alert' : undefined}>
+                <p className="delete-confirmation-copy" id="recurring-confirmation-description" role={modalMode === 'permanent-delete' ? 'alert' : undefined}>
                   {modalMode === 'deactivate'
                     ? 'This rule will remain in your list as inactive. It will no longer generate transactions.'
                     : 'This action is permanent and cannot be undone. Rules with generated occurrences cannot be deleted, and their transaction history will never be removed.'}
@@ -770,7 +906,7 @@ function RecurringTransactionsPage() {
                 <div className="transaction-form-actions">
                   <button className="button modal-cancel-button" type="button" onClick={closeModal} disabled={pendingRuleAction !== null}>Cancel</button>
                   <button
-                    className="delete-confirm-button"
+                    className={modalMode === 'deactivate' ? 'button button-primary transaction-submit-button' : 'delete-confirm-button'}
                     type="button"
                     onClick={() => void (modalMode === 'deactivate' ? deactivateRule() : permanentlyDeleteRule())}
                     disabled={pendingRuleAction !== null}
@@ -790,7 +926,12 @@ function RecurringTransactionsPage() {
                 <label className="transaction-field" htmlFor="recurring-amount">
                   Amount
                   <span className="amount-input-wrap"><span aria-hidden="true">€</span><input id="recurring-amount" name="amount" type="text" inputMode="decimal" autoComplete="off" value={form.amount} onChange={(event) => updateForm('amount', event.target.value)} required aria-describedby="recurring-amount-help" /></span>
-                  <span className="recurring-field-help" id="recurring-amount-help">Positive amount, up to two decimal places.</span>
+                  <span className="recurring-field-help" id="recurring-amount-help">Enter EUR with a decimal point (for example, 125.50), up to two decimal places.</span>
+                  {getAmountInCents(form.amount) !== null && (
+                    <span className="recurring-field-help">
+                      Displayed as {currencyFormatter.format(Number(form.amount))}.
+                    </span>
+                  )}
                 </label>
                 <div className="recurring-form-grid">
                   <label className="transaction-field" htmlFor="recurring-type">
@@ -822,10 +963,14 @@ function RecurringTransactionsPage() {
                   <label className="transaction-field" htmlFor="recurring-start-date">
                     Start date
                     <input id="recurring-start-date" name="startDate" type="date" value={form.startDate} onChange={(event) => updateForm('startDate', event.target.value)} required />
+                    {isValidDateOnly(form.startDate) && <span className="recurring-field-help">Selected: {formatDate(form.startDate)}</span>}
+                    <span className="recurring-field-help">Calendar date; it is not shifted by your time zone.</span>
                   </label>
                   <label className="transaction-field" htmlFor="recurring-end-date">
                     End date <span className="optional-label">Optional</span>
                     <input id="recurring-end-date" name="endDate" type="date" value={form.endDate} onChange={(event) => updateForm('endDate', event.target.value)} />
+                    {isValidDateOnly(form.endDate) && <span className="recurring-field-help">Selected: {formatDate(form.endDate)}</span>}
+                    <span className="recurring-field-help">The final occurrence may run on this date, but never after it.</span>
                   </label>
                 </div>
                 <label className="transaction-field" htmlFor="recurring-description">
@@ -834,8 +979,10 @@ function RecurringTransactionsPage() {
                 </label>
                 <label className="transaction-field" htmlFor="recurring-time-zone">
                   Time zone
-                  <input id="recurring-time-zone" name="timeZone" type="text" value={form.timeZone} onChange={(event) => updateForm('timeZone', event.target.value)} required />
-                  <span className="recurring-field-help">Use an IANA time zone, such as Europe/Paris.</span>
+                  <select id="recurring-time-zone" name="timeZone" value={form.timeZone} onChange={(event) => updateForm('timeZone', event.target.value)} required>
+                    {formTimeZones.map((timeZone) => <option key={timeZone} value={timeZone}>{timeZone}</option>)}
+                  </select>
+                  <span className="recurring-field-help">Choose a supported IANA time zone. New rules default to Europe/Paris.</span>
                 </label>
                 {formError && <p className="dashboard-message dashboard-error transaction-form-error" role="alert">{formError}</p>}
                 <div className="transaction-form-actions">

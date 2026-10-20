@@ -332,7 +332,7 @@ export function validateRecurringTransactionForReactivation(input: {
   nextRunDate: Date;
   endDate: Date | null;
   timeZone: string;
-}): string | null {
+}, now: Date = new Date()): string | null {
   if (
     !input.amount.isFinite() ||
     input.amount.lessThanOrEqualTo(0) ||
@@ -357,6 +357,31 @@ export function validateRecurringTransactionForReactivation(input: {
     const nextRunDate = serializeRecurringDate(input.nextRunDate);
     const endDate =
       input.endDate === null ? null : serializeRecurringDate(input.endDate);
+    if (!Number.isFinite(now.getTime())) {
+      return "Current time is invalid";
+    }
+    const localDateParts = new Intl.DateTimeFormat(
+      "en-CA-u-ca-iso8601-nu-latn",
+      {
+        timeZone: input.timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      },
+    ).formatToParts(now);
+    const localDateValues = new Map(
+      localDateParts.map(({ type, value }) => [type, value]),
+    );
+    const year = localDateValues.get("year");
+    const month = localDateValues.get("month");
+    const day = localDateValues.get("day");
+    if (!year || !month || !day || localDateValues.get("era") === "BC") {
+      return "Unable to determine the current date in the rule's time zone";
+    }
+    const localToday = `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    if (endDate !== null && endDate < localToday) {
+      return "The recurring schedule has already ended";
+    }
     const occurrenceIndex = getRecurrenceIndex(
       startDate,
       input.frequency,

@@ -3,6 +3,7 @@ import { once } from "node:events";
 import test from "node:test";
 import express from "express";
 import { Prisma } from "@prisma/client";
+import jwt from "jsonwebtoken";
 
 process.env.JWT_SECRET = "savings-goals-ownership-test-only";
 process.env.DATABASE_URL = "postgresql://127.0.0.1:1/test-only";
@@ -10,6 +11,7 @@ process.env.DATABASE_URL = "postgresql://127.0.0.1:1/test-only";
 const { createSavingsGoalsRouter } = await import(
   "../src/routes/savings-goals.ts"
 );
+const { authenticateToken } = await import("../src/middleware/auth.ts");
 
 const authenticatedUserId = "user-A";
 const otherUserGoalId = "goal-B";
@@ -122,23 +124,21 @@ function createFakeDatabase() {
 
 function createHarness({ authenticated = true } = {}) {
   const database = createFakeDatabase();
-  const authenticate = (req, _res, next) => {
-    if (authenticated) {
-      req.user = {
-        userId: authenticatedUserId,
-        email: "user-a@example.invalid",
-      };
-    }
-    next();
-  };
 
   return {
     ...database,
-    router: createSavingsGoalsRouter(database.db, authenticate),
+    authenticated,
+    router: createSavingsGoalsRouter(database.db, authenticateToken),
   };
 }
 
-async function requestWith(harness, path, method = "GET", body) {
+async function requestWith(
+  harness,
+  path,
+  method = "GET",
+  body,
+  userId = authenticatedUserId,
+) {
   const app = express();
   app.use(express.json());
   app.use("/api/savings-goals", harness.router);
@@ -147,17 +147,23 @@ async function requestWith(harness, path, method = "GET", body) {
   const address = server.address();
 
   try {
+    const headers = {};
+    if (harness.authenticated) {
+      headers.authorization = `Bearer ${jwt.sign(
+        { userId, email: `${userId}@example.invalid` },
+        process.env.JWT_SECRET,
+        { expiresIn: "5m" },
+      )}`;
+    }
+    if (body !== undefined) headers["content-type"] = "application/json";
+
+    const requestOptions = { method };
+    if (Object.keys(headers).length > 0) requestOptions.headers = headers;
+    if (body !== undefined) requestOptions.body = JSON.stringify(body);
+
     const response = await fetch(
       `http://127.0.0.1:${address.port}/api/savings-goals${path}`,
-      {
-        method,
-        ...(body === undefined
-          ? {}
-          : {
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(body),
-            }),
-      },
+      requestOptions,
     );
     return { response, body: await response.json() };
   } finally {
@@ -202,6 +208,19 @@ test("GET / returns only savings goals owned by the authenticated user", async (
   assert.deepEqual(harness.calls.findMany, [
     { where: { userId: "user-A" } },
   ]);
+
+  const userBResult = await requestWith(
+    harness,
+    "/",
+    "GET",
+    undefined,
+    "user-B",
+  );
+  assert.equal(userBResult.response.status, 200);
+  assert.deepEqual(
+    userBResult.body.goals.map(({ id }) => id),
+    [otherUserGoalId],
+  );
 });
 
 test("PUT /:id cannot update another user's savings goal", async () => {

@@ -1,5 +1,6 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import type { Response } from "express";
+import type { PrismaClient } from "@prisma/client";
 import bcrypt from "bcrypt";
 import prisma from "../prisma.js";
 import { generateToken } from "../utils/jwt.js";
@@ -73,70 +74,72 @@ router.post("/register", async (req, res) => {
     });
   }
 });
-router.post("/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({
+export function createLoginHandler(
+  db: Pick<PrismaClient, "user"> = prisma,
+): RequestHandler {
+  return async (req, res) => {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          message: "Email and password are required",
+        });
+      }
+
+      const normalizedEmail = String(email).trim().toLowerCase();
+      const user = await db.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid email or password",
+        });
+      }
+
+      const passwordMatches = await bcrypt.compare(
+        String(password),
+        user.passwordHash,
+      );
+      if (!passwordMatches) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid email or password",
+        });
+      }
+
+      const token = generateToken({
+        userId: user.id,
+        email: user.email,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Login successful",
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          createdAt: user.createdAt,
+        },
+      });
+    } catch {
+      console.error("Login failed due to a server error");
+      return res.status(500).json({
         success: false,
-        message: "Email and password are required",
+        message: "Something went wrong while logging in",
       });
     }
+  };
+}
 
-    const normalizedEmail = String(email).trim().toLowerCase();
-
-    const user = await prisma.user.findUnique({
-      where: {
-        email: normalizedEmail,
-      },
-    });
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid email or password",
-      });
-    }
-
-    const passwordMatches = await bcrypt.compare(
-      String(password),
-      user.passwordHash
-    );
-
-    if (!passwordMatches) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid email or password",
-      });
-    }
-
-  const token = generateToken({
-  userId: user.id,
-  email: user.email,
-});
-
-return res.status(200).json({
-  success: true,
-  message: "Login successful",
-  token,
-  user: {
-    id: user.id,
-    email: user.email,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    createdAt: user.createdAt,
-  },
-});
-  } catch (error) {
-    console.error("Login error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Something went wrong while logging in",
-    });
-  }
-});
+router.post("/login", createLoginHandler());
 router.get(
   "/me",
   authenticateToken,
@@ -184,4 +187,5 @@ router.get(
     });
   }
 });
+
 export default router;

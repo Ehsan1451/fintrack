@@ -415,7 +415,11 @@ function SavingsGoalsPage() {
             <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
             <span>Fin<span className="brand-accent">Track</span></span>
           </Link>
-          <span className="dashboard-header-label">Personal finance</span>
+          <nav className="dashboard-page-nav" aria-label="Account navigation">
+            <Link to="/dashboard">Overview</Link>
+            <Link to="/savings-goals" aria-current="page">Savings goals</Link>
+            <Link to="/recurring-transactions">Recurring</Link>
+          </nav>
           <button
             className="button button-primary"
             type="button"
