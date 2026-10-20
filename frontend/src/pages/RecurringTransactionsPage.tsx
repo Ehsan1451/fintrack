@@ -643,6 +643,7 @@ function RecurringTransactionsPage() {
             <Link to="/dashboard">Overview</Link>
             <Link to="/savings-goals">Savings goals</Link>
             <Link to="/recurring-transactions" aria-current="page">Recurring</Link>
+            <Link to="/reports">Reports</Link>
           </nav>
           <button className="button button-primary" type="button" onClick={logOut}>Log out</button>
         </header>

@@ -35,9 +35,14 @@ function createFakeDatabase(seed) {
   const calls = { create: [], update: [], delete: [] };
 
   function matches(record, where) {
+    const dateMatches =
+      !where.date ||
+      ((!where.date.gte || record.date >= where.date.gte) &&
+        (!where.date.lt || record.date < where.date.lt));
     return (
       (!Object.hasOwn(where, "userId") || record.userId === where.userId) &&
-      (!Object.hasOwn(where, "id") || record.id === where.id)
+      (!Object.hasOwn(where, "id") || record.id === where.id) &&
+      dateMatches
     );
   }
 
@@ -131,8 +136,8 @@ function createFakeDatabase(seed) {
   return { db: { transaction }, records, calls };
 }
 
-function createHarness({ authenticated = true } = {}) {
-  const database = createFakeDatabase([
+function createHarness({ authenticated = true, seed } = {}) {
+  const database = createFakeDatabase(seed ?? [
     createTransaction(
       "transaction-A",
       "user-A",
@@ -207,7 +212,11 @@ async function requestWith(
       `http://127.0.0.1:${address.port}/api/transactions${path}`,
       requestOptions,
     );
-    return { response, body: await response.json() };
+    const contentType = response.headers.get("content-type") ?? "";
+    const responseBody = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
+    return { response, body: responseBody };
   } finally {
     server.close();
     await once(server, "close");
@@ -329,6 +338,138 @@ test("GET /trends returns only the authenticated user's transaction dates and to
   ]);
 });
 
+test("GET /reports summarizes owned transactions and zero-fills the selected months", async () => {
+  const harness = createHarness();
+  const { response, body } = await requestWith(
+    harness,
+    "/reports?from=2026-04-01&to=2026-06-30&timeZone=UTC",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.totalIncome, "100");
+  assert.equal(body.data.totalExpenses, "25");
+  assert.equal(body.data.netCashFlow, "75");
+  assert.equal(body.data.transactionCount, 2);
+  assert.deepEqual(body.data.monthly, [
+    { month: "2026-04", income: "100", expenses: "25" },
+    { month: "2026-05", income: "0", expenses: "0" },
+    { month: "2026-06", income: "0", expenses: "0" },
+  ]);
+  assert.equal(
+    body.data.expensesByCategory.find(({ category }) => category === "FOOD").total,
+    "25",
+  );
+  assert.equal(
+    body.data.expensesByCategory.find(({ category }) => category === "FOOD").share,
+    "100",
+  );
+  assert.equal(
+    body.data.expensesByCategory.find(({ category }) => category === "HOUSING").total,
+    "0",
+  );
+});
+
+test("GET /reports uses inclusive local calendar dates and excludes outside rows", async () => {
+  const harness = createHarness({
+    seed: [
+      createTransaction("paris-start", "user-A", "12.50", "EXPENSE", "FOOD", "2026-04-30T22:00:00.000Z"),
+      createTransaction("paris-end", "user-A", "7.50", "EXPENSE", "FOOD", "2026-05-01T21:59:59.999Z"),
+      createTransaction("after-end", "user-A", "90", "EXPENSE", "FOOD", "2026-05-01T22:00:00.000Z"),
+      createTransaction("other-user", "user-B", "900", "INCOME", "SALARY", "2026-05-01T12:00:00.000Z"),
+    ],
+  });
+  const { response, body } = await requestWith(
+    harness,
+    "/reports?from=2026-05-01&to=2026-05-01&timeZone=Europe%2FParis",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.totalIncome, "0");
+  assert.equal(body.data.totalExpenses, "20");
+  assert.equal(body.data.transactionCount, 2);
+  assert.equal(body.data.monthly[0].month, "2026-05");
+});
+
+test("GET /reports handles a daylight-saving transition without extending the local date", async () => {
+  const harness = createHarness({
+    seed: [
+      createTransaction("dst-start", "user-A", "10", "EXPENSE", "FOOD", "2026-03-28T23:00:00.000Z"),
+      createTransaction("dst-end", "user-A", "20", "EXPENSE", "FOOD", "2026-03-29T21:59:59.999Z"),
+      createTransaction("after-dst-day", "user-A", "90", "EXPENSE", "FOOD", "2026-03-29T22:00:00.000Z"),
+    ],
+  });
+  const { response, body } = await requestWith(
+    harness,
+    "/reports?from=2026-03-29&to=2026-03-29&timeZone=Europe%2FParis",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.totalExpenses, "30");
+  assert.equal(body.data.transactionCount, 2);
+});
+
+test("GET /reports returns empty totals and validates report ranges", async () => {
+  const harness = createHarness({ seed: [] });
+  const emptyResult = await requestWith(
+    harness,
+    "/reports?from=2026-01-01&to=2026-03-31&timeZone=UTC",
+  );
+  assert.equal(emptyResult.response.status, 200);
+  assert.equal(emptyResult.body.data.totalIncome, "0");
+  assert.equal(emptyResult.body.data.totalExpenses, "0");
+  assert.equal(emptyResult.body.data.netCashFlow, "0");
+  assert.deepEqual(emptyResult.body.data.monthly, [
+    { month: "2026-01", income: "0", expenses: "0" },
+    { month: "2026-02", income: "0", expenses: "0" },
+    { month: "2026-03", income: "0", expenses: "0" },
+  ]);
+  assert.equal(
+    (await requestWith(harness, "/reports?from=2026-02-30&to=2026-03-01&timeZone=UTC")).response.status,
+    400,
+  );
+  assert.equal(
+    (await requestWith(harness, "/reports?from=2026-01-01&to=2026-01-01&timeZone=Not%2FAZone")).response.status,
+    400,
+  );
+  assert.equal(
+    (await requestWith(harness, "/reports?from=2020-01-01&to=2026-01-01&timeZone=UTC")).response.status,
+    400,
+  );
+});
+
+test("GET /reports/export exports only owned rows and safely escapes CSV fields", async () => {
+  const harness = createHarness({
+    seed: [
+      createTransaction(
+        "csv-row",
+        "user-A",
+        "12.50",
+        "EXPENSE",
+        "FOOD",
+        "2026-04-10T00:00:00.000Z",
+      ),
+      createTransaction(
+        "csv-other-user",
+        "user-B",
+        "99",
+        "INCOME",
+        "SALARY",
+        "2026-04-10T00:00:00.000Z",
+      ),
+    ],
+  });
+  harness.records[0].description = '=HYPERLINK("x","y"), note\nsecond line';
+  const { response, body } = await requestWith(
+    harness,
+    "/reports/export?from=2026-04-01&to=2026-04-30&timeZone=UTC",
+  );
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/csv/);
+  assert.match(body, /"'=HYPERLINK\(""x"",""y""\), note\nsecond line"/);
+  assert.doesNotMatch(body, /"\d+","INCOME","SALARY"/);
+});
+
 test("protected routes reject requests without an authenticated user", async () => {
   const harness = createHarness({ authenticated: false });
   const { response, body } = await requestWith(harness, "/");
@@ -338,4 +479,18 @@ test("protected routes reject requests without an authenticated user", async () 
   assert.equal(harness.calls.create.length, 0);
   assert.equal(harness.calls.update.length, 0);
   assert.equal(harness.calls.delete.length, 0);
+});
+
+test("report endpoints reject requests without an authenticated user", async () => {
+  const harness = createHarness({ authenticated: false, seed: [] });
+  const report = await requestWith(
+    harness,
+    "/reports?from=2026-04-01&to=2026-04-30&timeZone=UTC",
+  );
+  const exportResult = await requestWith(
+    harness,
+    "/reports/export?from=2026-04-01&to=2026-04-30&timeZone=UTC",
+  );
+  assert.equal(report.response.status, 401);
+  assert.equal(exportResult.response.status, 401);
 });

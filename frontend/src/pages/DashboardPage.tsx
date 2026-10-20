@@ -1092,6 +1092,7 @@ function DashboardPage() {
             <Link to="/dashboard" aria-current="page">Overview</Link>
             <Link to="/savings-goals">Savings goals</Link>
             <Link to="/recurring-transactions">Recurring</Link>
+            <Link to="/reports">Reports</Link>
           </nav>
           <button
             className="button button-primary"

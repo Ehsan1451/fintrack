@@ -27,13 +27,165 @@ type TransactionCategory =
   | (typeof incomeCategories)[number]
   | (typeof expenseCategories)[number];
 
+type ReportTransaction = {
+  date: Date;
+  type: TransactionType;
+  category: TransactionCategory;
+  amount: Prisma.Decimal;
+  description: string | null;
+};
+
 const categoriesByType: Record<TransactionType, readonly TransactionCategory[]> = {
   INCOME: incomeCategories,
   EXPENSE: expenseCategories,
 };
 
+const reportDatePattern = /^(\d{4})-(\d{2})-(\d{2})$/;
+const maxReportRangeDays = 366 * 5;
+
+function parseReportDate(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = reportDatePattern.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || year > 9998 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(0, 0, 0, 0);
+  return date.toISOString().slice(0, 10) === value ? value : null;
+}
+
+function createReportTimeZoneFormatter(value: unknown): Intl.DateTimeFormat | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA-u-ca-iso8601-nu-latn", {
+      timeZone: value,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const resolvedTimeZone = formatter.resolvedOptions().timeZone;
+    return /^(?:[+-]\d{2}|GMT[+-])/i.test(resolvedTimeZone) ? null : formatter;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalDateOrdinal(timestamp: number, formatter: Intl.DateTimeFormat): number {
+  const parts = formatter.formatToParts(new Date(timestamp));
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value;
+  const year = value("year");
+  const month = value("month");
+  const day = value("day");
+  if (!year || !month || !day) throw new RangeError("Unable to determine local date");
+  const date = new Date(0);
+  date.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+  date.setUTCHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function getZonedDayStart(
+  date: string,
+  formatter: Intl.DateTimeFormat,
+  allowSkippedDate = false,
+): Date {
+  const target = new Date(`${date}T00:00:00.000Z`).getTime();
+  let before = target - 36 * 60 * 60 * 1000;
+  let after = target + 36 * 60 * 60 * 1000;
+  if (
+    getLocalDateOrdinal(before, formatter) >= target ||
+    getLocalDateOrdinal(after, formatter) < target
+  ) {
+    throw new RangeError("Unable to determine local date boundary");
+  }
+  while (after - before > 1) {
+    const midpoint = before + Math.floor((after - before) / 2);
+    if (getLocalDateOrdinal(midpoint, formatter) >= target) after = midpoint;
+    else before = midpoint;
+  }
+  const actualDate = getLocalDateOrdinal(after, formatter);
+  if (actualDate !== target && !(allowSkippedDate && actualDate > target)) {
+    throw new RangeError("The requested date does not exist in this time zone");
+  }
+  return new Date(after);
+}
+
+function getReportWindow(query: {
+  from?: unknown;
+  to?: unknown;
+  timeZone?: unknown;
+}) {
+  const from = parseReportDate(query.from);
+  const to = parseReportDate(query.to);
+  const formatter = createReportTimeZoneFormatter(query.timeZone);
+  if (!from || !to || from > to || !formatter) return null;
+  const startOrdinal = new Date(`${from}T00:00:00.000Z`).getTime();
+  const endOrdinal = new Date(`${to}T00:00:00.000Z`).getTime();
+  if ((endOrdinal - startOrdinal) / 86_400_000 > maxReportRangeDays) return null;
+  const afterTo = new Date(endOrdinal);
+  afterTo.setUTCDate(afterTo.getUTCDate() + 1);
+  const nextDate = afterTo.toISOString().slice(0, 10);
+  try {
+    return {
+      from,
+      to,
+      formatter,
+      start: getZonedDayStart(from, formatter),
+      end: getZonedDayStart(nextDate, formatter, true),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getLocalMonthKey(date: Date, formatter: Intl.DateTimeFormat): string {
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  if (!year || !month) throw new RangeError("Unable to determine local month");
+  return `${year}-${month}`;
+}
+
+function monthKeysBetween(from: string, to: string): string[] {
+  const fromYear = Number(from.slice(0, 4));
+  const fromMonth = Number(from.slice(5, 7));
+  const toYear = Number(to.slice(0, 4));
+  const toMonth = Number(to.slice(5, 7));
+  const result: string[] = [];
+  for (let value = fromYear * 12 + fromMonth - 1; value <= toYear * 12 + toMonth - 1; value += 1) {
+    result.push(`${String(Math.floor(value / 12)).padStart(4, "0")}-${String(value % 12 + 1).padStart(2, "0")}`);
+  }
+  return result;
+}
+
+function csvCell(value: string): string {
+  const safe = /^[\u0000-\u0020\uFEFF]*[=+\-@]/.test(value) ? `'${value}` : value;
+  return `"${safe.replaceAll('"', '""')}"`;
+}
+
+function serializeReportCsv(transactions: ReportTransaction[]): string {
+  const header = ["Date (UTC)", "Type", "Category", "Description", "Amount (EUR)"];
+  const rows = transactions.map((transaction) => [
+    transaction.date.toISOString(),
+    transaction.type,
+    transaction.category,
+    transaction.description ?? "",
+    transaction.amount.toString(),
+  ]);
+  return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+}
+
 function isTransactionType(value: unknown): value is TransactionType {
   return value === "INCOME" || value === "EXPENSE";
+}
+
+function isExpenseCategory(
+  value: TransactionCategory,
+): value is (typeof expenseCategories)[number] {
+  return expenseCategories.some((category) => category === value);
 }
 
 function isCategoryForType(type: unknown, category: unknown): category is TransactionCategory {
@@ -49,6 +201,174 @@ export function createTransactionsRouter(
   authenticate: RequestHandler = authenticateToken,
 ): Router {
   const router = Router();
+
+  router.get(
+    "/reports",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return res.status(401).json({
+            success: false,
+            message: "Authentication required",
+          });
+        }
+
+        const window = getReportWindow({
+          from: req.query.from,
+          to: req.query.to,
+          timeZone: req.query.timeZone,
+        });
+        if (!window) {
+          return res.status(400).json({
+            success: false,
+            message: "Provide a valid date range and IANA time zone (maximum 5 years)",
+          });
+        }
+
+        const transactions = await db.transaction.findMany({
+          where: {
+            userId,
+            date: { gte: window.start, lt: window.end },
+          },
+          orderBy: { date: "asc" },
+          select: {
+            date: true,
+            type: true,
+            category: true,
+            amount: true,
+            description: true,
+          },
+        });
+
+        const zero = () => new Prisma.Decimal(0);
+        const monthly = new Map(
+          monthKeysBetween(window.from, window.to).map((month) => [
+            month,
+            { income: zero(), expenses: zero() },
+          ]),
+        );
+        const expensesByCategory = new Map(
+          expenseCategories.map((category) => [category, zero()]),
+        );
+        let totalIncome = zero();
+        let totalExpenses = zero();
+
+        for (const transaction of transactions) {
+          if (transaction.type === "INCOME") {
+            totalIncome = totalIncome.plus(transaction.amount);
+            const month = getLocalMonthKey(transaction.date, window.formatter);
+            const totals = monthly.get(month);
+            if (totals) totals.income = totals.income.plus(transaction.amount);
+          } else {
+            totalExpenses = totalExpenses.plus(transaction.amount);
+            const month = getLocalMonthKey(transaction.date, window.formatter);
+            const totals = monthly.get(month);
+            if (totals) totals.expenses = totals.expenses.plus(transaction.amount);
+            if (isExpenseCategory(transaction.category)) {
+              const category = expensesByCategory.get(transaction.category);
+              if (category !== undefined) {
+                expensesByCategory.set(
+                  transaction.category,
+                  category.plus(transaction.amount),
+                );
+              }
+            }
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          data: {
+            from: window.from,
+            to: window.to,
+            timeZone: window.formatter.resolvedOptions().timeZone,
+            totalIncome: totalIncome.toString(),
+            totalExpenses: totalExpenses.toString(),
+            netCashFlow: totalIncome.minus(totalExpenses).toString(),
+            transactionCount: transactions.length,
+            monthly: Array.from(monthly, ([month, totals]) => ({
+              month,
+              income: totals.income.toString(),
+              expenses: totals.expenses.toString(),
+            })),
+            expensesByCategory: expenseCategories.map((category) => {
+              const total = expensesByCategory.get(category) ?? zero();
+              return {
+                category,
+                total: total.toString(),
+                share: totalExpenses.isZero()
+                  ? "0"
+                  : total.dividedBy(totalExpenses).times(100).toString(),
+              };
+            }),
+          },
+        });
+      } catch (error) {
+        console.error("Get financial report error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
+
+  router.get(
+    "/reports/export",
+    authenticate,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const userId = req.user?.userId;
+        if (!userId) {
+          return res.status(401).json({
+            success: false,
+            message: "Authentication required",
+          });
+        }
+        const window = getReportWindow({
+          from: req.query.from,
+          to: req.query.to,
+          timeZone: req.query.timeZone,
+        });
+        if (!window) {
+          return res.status(400).json({
+            success: false,
+            message: "Provide a valid date range and IANA time zone (maximum 5 years)",
+          });
+        }
+
+        const transactions = await db.transaction.findMany({
+          where: {
+            userId,
+            date: { gte: window.start, lt: window.end },
+          },
+          orderBy: { date: "asc" },
+          select: {
+            date: true,
+            type: true,
+            category: true,
+            amount: true,
+            description: true,
+          },
+        });
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader(
+          "Content-Disposition",
+          'attachment; filename="fintrack-report.csv"',
+        );
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(200).send(serializeReportCsv(transactions));
+      } catch (error) {
+        console.error("Export financial report error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Something went wrong",
+        });
+      }
+    },
+  );
 
   router.get(
     "/summary",

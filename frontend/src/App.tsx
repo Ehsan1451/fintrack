@@ -6,6 +6,7 @@ import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
 import SavingsGoalsPage from './pages/SavingsGoalsPage'
 import RecurringTransactionsPage from './pages/RecurringTransactionsPage'
+import ReportsPage from './pages/ReportsPage'
 
 function DashboardRoute({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<'checking' | 'authenticated' | 'unauthenticated' | 'error'>('checking')
@@ -90,6 +91,7 @@ function App() {
         <Route path="/dashboard" element={<DashboardRoute><DashboardPage /></DashboardRoute>} />
         <Route path="/savings-goals" element={<DashboardRoute><SavingsGoalsPage /></DashboardRoute>} />
         <Route path="/recurring-transactions" element={<DashboardRoute><RecurringTransactionsPage /></DashboardRoute>} />
+        <Route path="/reports" element={<DashboardRoute><ReportsPage /></DashboardRoute>} />
       </Routes>
     </BrowserRouter>
   )

@@ -419,6 +419,7 @@ function SavingsGoalsPage() {
             <Link to="/dashboard">Overview</Link>
             <Link to="/savings-goals" aria-current="page">Savings goals</Link>
             <Link to="/recurring-transactions">Recurring</Link>
+            <Link to="/reports">Reports</Link>
           </nav>
           <button
             className="button button-primary"
